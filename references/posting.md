@@ -28,7 +28,7 @@ post within 1-3 hours of the moment.
 - **YouTube Shorts**: title = hook; description = caption; Shorts need <= 60 s (we enforce via `clip.max_seconds`).
 - **X**: only if the campaign allows; native video, >= 10 s, hook that invites replies/DM shares; one post per hour; no links in the post.
 
-## Account rules most campaigns impose (put in checklist.md)
+## Account rules many campaigns impose (set `rules.new_account_warmup: true` and `rules.notes` only if the brief has them)
 
 - New accounts: 3-day warm-up (scroll, like, comment, follow in-niche; one niche post on day 3; post from the mobile app for the first ~10 posts, no schedulers).
 - Keep the account single-niche and single-language; profile complete; 2FA on.
@@ -39,5 +39,5 @@ post within 1-3 hours of the moment.
 ## Submission timing
 
 Campaign reviewers often require submitting the post link within N minutes of posting (`rules.submit_within_minutes`, often 30).
-`checklist.md` carries the deadline. Analytics screen recordings are requested once a clip passes the minimum payout views; tell the
+Each `post_<platform>.md` carries the deadline and the campaign URL (`listing`). Analytics screen recordings are requested once a clip passes the minimum payout views; tell the
 user when a clip in `index.csv` crosses it (`payout.min_payout_usd` / `payout.cpm_usd` * 1000 views).

@@ -97,3 +97,41 @@ def test_build_ass_no_overlap():
     lines = [l for l in ass.splitlines() if l.startswith("Dialogue: 0")]
     ends = [float(l.split(",")[2].split(":")[-1]) for l in lines[:3]]
     assert max(ends) <= 2.21
+
+
+def test_ffpath_escaping():
+    assert common.ffpath("C:\\Users\\me\\it's\\captions.ass") == "'C\\:/Users/me/it\\'s/captions.ass'"
+
+
+def test_hms_rounding():
+    assert common.hms(59.999) == "0:01:00.00"
+    assert common.hms(3599.996) == "1:00:00.00"
+
+
+def test_hook_check_clickbait_and_mentions_fail():
+    assert not hook_check.check("Kreek robbery gone wrong insane", "kreek robbed", [])["ok"]
+    assert not hook_check.check("Kreek robs @Jason store", "kreek robs jason store", [])["ok"]
+
+
+def test_reaction_regex_word_boundaries():
+    assert not signals.REACTIONS["hype"].search("how now brown cow")
+    assert signals.REACTIONS["hype"].search("W streamer")
+    assert not signals.REACTIONS["laugh"].search("deadline crying wolf".replace("crying", "cryptic"))
+
+
+def test_transcribe_keeps_real_speech_starting_with_crashing():
+    raw = {"segments": [{"start": 0, "end": 2, "text": "Crashing into the wall right now", "no_speech_prob": 0.0},
+                        {"start": 10, "end": 11, "text": "[screams]", "no_speech_prob": 0.0}],
+           "words": [{"word": "Crashing", "start": 0, "end": 0.5}, {"word": "into", "start": 0.6, "end": 0.8}]}
+    out = transcribe.clean(raw, 20.0)
+    assert "Crashing into the wall" in out["text"] and "[screams]" not in out["text"]
+
+
+def test_campaign_coerce_and_lists():
+    import campaign as camp
+    assert camp._coerce("007") == "007" and camp._coerce("12") == 12 and camp._coerce("0.4") == 0.4 and camp._coerce("@Kreek") == "@Kreek"
+    d: dict = {}
+    camp._deep_set(d, "caption.hashtags", "#A #B")
+    assert d["caption"]["hashtags"] == ["#A", "#B"]
+    camp._deep_set(d, "clip.facecam_region.x", 0.1)  # through a missing/None parent
+    assert d["clip"]["facecam_region"]["x"] == 0.1

@@ -11,7 +11,7 @@ whole frame; text, face and overlay may not. `review.py` enforces this and draws
 ```
 y 0-230      top UI margin (nothing readable)
 y 240-370    overlay band (logo centred at y 305, width 0.72 * 1080 = 778 px -> x 151..929)   [only if the campaign has an overlay]
-y 390-720    face panel (330 px high, white 6 px frame, centred)                                 [no overlay: panel starts at y 240 and is 470 px high]
+y 390-720    face panel (330 px high, white 6 px frame, centred)                                 [no overlay: panel starts at y 240 and is 480 px high]
 y 740-1560   gameplay (source cropped to 1080:820, lanczos; crop shifted right of the facecam strip + alerts)
   y 800      hook box top (<= 2 lines, auto font 84 -> 58, margins 70 / 160 so it never enters the right column)
   y ~1300    captions (bottom edge at 1380; 3-word phrases, active word yellow + 12 %, 84 px Anton, 9 px outline)
@@ -41,6 +41,9 @@ Source quality: the face panel upscales ~2.5x; fetch 1080p60 whenever the platfo
   The agent cannot hear audio: it only adds words it is certain of (frames, chat, repeated lines).
 - Paid option (never automatic): ElevenLabs Scribe v3 (`transcribe.py --engine scribe`) hears more words on game audio (55 vs 47 in the same
   test) and labels speakers; voice isolation did not add streamer words in our test. Use only when the user has a plan and asks for it.
+- `transcript.json.words` are in stream seconds, the same shape as `spec.json.words`: edit, copy back, set `words_locked: true`, re-build.
+- Right-side facecams are cropped out too (`facecam_region.x >= 0.5` shifts the gameplay crop left). `face-top` without a calibrated region
+  falls back to `fill` automatically, so there is never a blank panel.
 - `word_pop` (default): phrases of up to 3 words, the spoken word turns yellow and pops; phrases never overlap. Profanity masked `s***`
   (`clip.mask_profanity`) and bleeped with a 1 kHz tone <= 0.9 s (`clip.bleep_profanity`).
 - Whisper quirks handled: hallucinated trailing "Thank you.", duplicated segments (glitch, < 0.25 s apart), words stretched over silences
@@ -78,5 +81,5 @@ A 24 s clip renders in ~15 s on an M1.
 | start on the setup line | `start_t` to the word's `start` - 0.3 |
 | end after the laugh | `end_t` = last reaction word `end` + 1.5 |
 | different hook | `hook` (re-run `hook_check.py --spec`) |
-| action at the frame edge | add `"game_crop_x": <source px>`? not supported yet: use `--layout fit` or note it in MEMORY.md |
+| action at the frame edge | use `--layout fit` for that clip (whole frame visible) |
 | no face this clip | `"layout": "fill"` |

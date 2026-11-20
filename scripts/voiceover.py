@@ -91,10 +91,12 @@ def main() -> None:
     if len(a.text) > 400:
         raise StepError("voiceover text longer than 400 chars; keep lines short (hook/context only)")
     ensure_voice(voice)
-    p = tts(a.text, voice, campaign / "voiceover_cache")
+    cache = campaign / "voiceover_cache"
+    before = {x.name for x in cache.glob("*.mp3")} if cache.exists() else set()
+    p = tts(a.text, voice, cache)
     if a.out:
         shutil.copy(p, a.out)
-    out({"ok": True, "file": str(a.out or p), "cached": True, "chars": len(a.text)})
+    out({"ok": True, "file": str(a.out or p), "cached": p.name in before, "chars": len(a.text)})
 
 
 if __name__ == "__main__":

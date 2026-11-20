@@ -23,8 +23,11 @@ python scripts/campaign.py new --root ~/Videos --name "KreekCraft GTA 6 Clipping
   --brief brief.txt --overlay overlay.png --youtube @Kreek --twitch kreekcraft --game "Grand Theft Auto VI"
 ```
 
-Then map the brief into `campaign.yaml` with `campaign.py set key=value ...` (values are JSON when they look like JSON) and run
-`campaign.py validate`. Show the user the resulting yaml and confirm anything you inferred.
+Then map the brief into `campaign.yaml` with `campaign.py set key=value ...` and run `campaign.py validate`. Lists must be JSON
+(`'caption.hashtags=["#A","#B"]'`; a plain `#A #B` string is split on spaces for hashtags/platforms only). Numbers are numbers,
+`true/false/null` are booleans/null. `--youtube`, `--twitch`, `--kick` accept handles/logins or full channel URLs. Show the user the
+resulting yaml and confirm anything you inferred. Non-English streams: set `clip.language` (ISO code) and add names to `clip.names`;
+captions use a Latin font, so non-Latin scripts are not supported yet (use `clip.captions: none` and say so in MEMORY.md).
 
 ## Field guide (what each field changes)
 
@@ -35,8 +38,8 @@ Then map the brief into `campaign.yaml` with `campaign.py set key=value ...` (va
 | `game` | title filter for replays (GTA matches "GTA", "Grand Theft"). |
 | `source_priority` | `auto` / `live_first` / `replay_first`, see sourcing.md. Set `live_first` when the brief says "clip live" or pays for speed. |
 | `replay_max_age_days` | how old a replay may be and still count as fresh (default 2). |
-| `platforms` | which `post_<platform>.txt` files are produced. |
-| `payout.*` | cpm, min/max payout, min engagement rate: written into the checklist so the user knows the view threshold. |
+| `platforms` | which `post_<platform>.md` files are produced (tiktok, instagram_reels, youtube_shorts, x). |
+| `payout.*` | cpm, min/max payout, min engagement rate. All `null` until the brief sets them; when set, the post files show the view threshold. |
 | `clip.min_seconds/max_seconds/target_seconds` | hard limits (review fails) and the sweet spot (soft). Shorts/Reels/TikTok all accept <= 60 s; 15-35 s retains best for gaming reactions. |
 | `clip.layout` | `face-top` when the streamer has a facecam, `fill` when there is none, `fit` for talk/IRL. |
 | `clip.facecam_region` | fractions of the source frame `{x,y,w,h}`. Calibrate from a frame sheet (render.md). `null` disables the face panel. |
@@ -47,10 +50,12 @@ Then map the brief into `campaign.yaml` with `campaign.py set key=value ...` (va
 | `audio.voice_id` | ElevenLabs voice (Drew `q0IMILNRPxOgtBTS4taI` by default). |
 | `overlay.*` | `required: true` makes review fail if the logo is covered. Defaults (`width_pct` 0.72, `y_pct` 0.159) keep it inside the platform-UI safe zone; review fails if you move it outside. |
 | `caption.required_text` / `hashtags` / `no_links` / `template` | copied **exactly** into every post text; rewording gets clips rejected. |
-| `rules.max_posts_per_clip`, `submit_within_minutes`, `keep_public_days`, `likes_visible`, `tier1_min_share` | go into `checklist.md`. |
-| `rules.banned` / `preferred_moments` | your selection guide; `rules.banned_words` (optional list) also feeds `hook_check.py`. |
+| `rules.max_posts_per_clip`, `submit_within_minutes`, `keep_public_days`, `likes_visible`, `tier1_min_share`, `new_account_warmup` | all `null` by default; set only what the brief says. Set rules appear in every `post_<platform>.md`; null rules never do. |
+| `rules.banned` / `preferred_moments` | your selection guide (free text from the brief). `rules.banned_words` (single words/short phrases) also fails `hook_check.py`. `rules.notes` lines are printed verbatim in the post files. |
 | `audience.posting_windows_et` | default US windows; posting.md explains how to refine per day. |
-| `user_timezone` | for converting posting times for the user. |
+| `user_timezone` | IANA name (e.g. `Asia/Kolkata`, `America/New_York`); ask the user once. `validate` fails while empty. |
+| `listing` | the campaign page URL; printed in the post files next to the submission step. |
+| `creator.kick_slug` | Kick creators: discovery + live recording via `watch.py` (streamlink), audio/speech signals; Kick has no chat replay. |
 
 ## Reading a brief: checklist
 

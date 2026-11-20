@@ -33,17 +33,17 @@ def check(hook: str, transcript: str, banned: list[str]) -> dict:
         problems.append(f"{len(hook)} chars (max 44, fits 2 lines)")
     if FILLERS.match(hook):
         problems.append("filler opener")
-    if re.search(r"https?://|www\.|#\w+", hook):
-        problems.append("link or hashtag in hook")
+    if re.search(r"https?://|www\.|#\w+|(^|\s)@\w+", hook):
+        problems.append("link, hashtag or @mention in hook")
     if hook.isupper() and len(hook) > 12:
         warnings.append("all caps: the renderer already uppercases; write it normally")
     if CLICKBAIT.search(hook):
-        warnings.append("clickbait phrasing; campaign brief bans misleading titles")
+        problems.append("clickbait phrasing (gone wrong / insane / shocking / ???); briefs ban misleading titles")
     for b in banned:
         if b and b.lower() in hook.lower():
             problems.append(f"banned word: {b}")
     support = None
-    if transcript:
+    if transcript and re.search(r"[a-z]", hook.lower()):
         hw, tw = content_words(hook), content_words(transcript)
         overlap = hw & tw
         support = round(len(overlap) / max(1, len(hw)), 2)
@@ -65,18 +65,19 @@ def main() -> None:
     ap.add_argument("--spec")
     ap.add_argument("--campaign")
     a = ap.parse_args()
-    banned: list[str] = []
-    try:
-        cfg = load_yaml(find_campaign(a.campaign) / "campaign.yaml")
-        banned = [b for b in cfg.get("rules", {}).get("banned_words", []) or []]
-    except Exception:
-        pass
     transcript = a.transcript or ""
     hooks = list(a.hooks)
-    if a.spec:
-        spec = read_json(a.spec)
+    spec = read_json(a.spec) if a.spec else None
+    if spec:
         hooks = hooks or [spec.get("hook", "")]
         transcript = transcript or " ".join(w["word"] for w in spec.get("words", []))
+    banned: list[str] = []
+    try:
+        cfg = load_yaml(find_campaign(a.campaign or (spec or {}).get("campaign")) / "campaign.yaml")
+        rules = cfg.get("rules", {}) or {}
+        banned = [b for b in (rules.get("banned_words") or []) if isinstance(b, str) and len(b.split()) <= 3]
+    except Exception:
+        pass
     if a.transcript_file:
         d = read_json(a.transcript_file, {})
         transcript = transcript or d.get("text") or " ".join(w["word"] for w in d.get("words", []))

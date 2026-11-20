@@ -12,10 +12,12 @@ Exit 1 on any hard failure. Fix and re-render; do not package a failing clip.
 | has_audio | yes | audio track present |
 | loudness_-14LUFS | no | measured integrated loudness within +-2.5 LU of -14 |
 | overlay_visible_all_frames | yes (if overlay.required) | >= 85 % of opaque overlay pixels match the reference on every sampled frame; a dip means something covered the logo |
-| hook_present | yes | hook text exists and shows >= 1.5 s |
-| captions_present | yes (unless captions: none) | >= 3 caption words rendered |
+| hook_present | yes | a hook event exists in the rendered caption script |
+| captions_present | yes (unless captions: none) | >= 3 caption events in the rendered caption script |
 | profanity_masked | yes (if mask_profanity) | no unmasked swear in the caption file |
 | not_raw_recording | yes | layout + hook + captions present (campaign "no low-effort content") |
+| inside_safe_zone | yes | overlay, face panel, hook and caption zones all inside x 60-930 / y 230-1420 |
+| no_uncaptioned_speech | no | render found no speech-energy stretches without words (`transcript.gaps_rel`) |
 
 ## What the agent checks by eye (frames.jpg), every clip
 

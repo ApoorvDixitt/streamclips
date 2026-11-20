@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Download a time range of a replay (or a whole short video) into the campaign's sources cache.
+"""Download a time range of a replay into the campaign's sources cache (Twitch/Kick via streamlink, YouTube via yt-dlp).
 
   fetch.py --campaign <dir> --url <twitch-or-youtube-url> --start 2:00:00 --end 2:30:00 [--quality 720p60,720p,best]
 
@@ -14,10 +14,11 @@ import subprocess
 import sys
 from pathlib import Path
 
-from common import StepError, duration, ffmpeg_bin, find_campaign, hms, main_guard, now_iso, out, parse_time, read_json, write_json
+from common import StepError, duration, ffmpeg_bin, find_campaign, hms, main_guard, now_iso, out, parse_time, read_json, write_json, ytdlp_base
 
 
 def parse_url(url: str) -> tuple[str, str]:
+    """-> (platform, id). Twitch VOD id / Twitch live login / YouTube video id / Kick VOD uuid or live slug."""
     m = re.search(r"twitch\.tv/videos/(\d+)", url)
     if m:
         return "twitch", m.group(1)
@@ -27,10 +28,17 @@ def parse_url(url: str) -> tuple[str, str]:
     m = re.search(r"(?:v=|youtu\.be/|/live/|/shorts/)([A-Za-z0-9_-]{11})", url)
     if m:
         return "youtube", m.group(1)
-    m = re.search(r"kick\.com/(?:video/)?([A-Za-z0-9_-]+)", url)
+    m = re.search(r"kick\.com/(?:video/|[^/]+/videos/)([0-9a-f-]{36})", url)
     if m:
-        return "kick", m.group(1)
+        return "kick", m.group(1)  # VOD
+    m = re.search(r"kick\.com/([A-Za-z0-9_-]+)/?(?:\?.*)?$", url)
+    if m:
+        return "kick", m.group(1).lower()  # live channel
     raise StepError(f"unsupported url: {url}")
+
+
+def is_live_url(platform: str, vid: str) -> bool:
+    return (platform == "twitch" and not vid.isdigit()) or (platform == "kick" and len(vid) != 36)
 
 
 def source_dir(campaign: Path, platform: str, vid: str) -> Path:
@@ -48,9 +56,11 @@ def streamlink_fetch(url: str, start: float, end: float, quality: str, dst_ts: P
 
 
 def ytdlp_fetch(url: str, start: float, end: float, dst: Path) -> None:
+    """Section download without re-encoding: cuts land on the nearest keyframe (a few seconds early), which is fine because
+    candidate windows carry lead/tail and render.py seeks exactly inside the segment."""
     sec = f"*{int(start)}-{int(end)}"
-    cmd = [sys.executable, "-m", "yt_dlp", "--no-warnings", "-f", "bv*[height<=1080]+ba/b[height<=1080]/b", "--download-sections", sec,
-           "--force-keyframes-at-cuts", "--merge-output-format", "mp4", "--ffmpeg-location", str(Path(ffmpeg_bin()).parent), "-o", str(dst), url]
+    cmd = ytdlp_base() + ["-f", "bv*[height<=1080]+ba/b[height<=1080]/b", "--download-sections", sec,
+                          "--merge-output-format", "mp4", "--ffmpeg-location", str(Path(ffmpeg_bin()).parent), "-o", str(dst), url]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
     if not dst.exists():
         raise StepError("yt-dlp failed:\n" + (r.stderr or r.stdout)[-1200:])
@@ -72,11 +82,15 @@ def main() -> None:
     a = ap.parse_args()
     campaign = find_campaign(a.campaign)
     platform, vid = parse_url(a.url)
+    if is_live_url(platform, vid):
+        raise StepError("that is a live channel URL; use watch.py start for live streams, fetch.py is for replays/videos")
     sdir = source_dir(campaign, platform, vid)
     start = parse_time(a.start)
     if not a.end:
-        raise StepError("--end is required (keep ranges <= 60 min; fetch around chat spikes first)")
+        raise StepError("--end is required (keep ranges <= 60 min; fetch around chat spikes first). For a whole short video pass its duration.")
     end = parse_time(a.end)
+    if end <= start:
+        raise StepError("--end must be after --start")
     if end - start > 3900:
         raise StepError("range longer than 65 min; split it")
     name = f"{int(start):06d}-{int(end):06d}"
@@ -84,7 +98,7 @@ def main() -> None:
     if final.exists() and final.stat().st_size > 100_000:
         out({"ok": True, "cached": True, "file": str(final), "offset_s": start, "duration_s": duration(final)})
         return
-    if platform == "twitch":
+    if platform in ("twitch", "kick"):
         tmp = final.with_suffix(".ts")
         streamlink_fetch(a.url, start, end, a.quality, tmp)
         remux(tmp, final)

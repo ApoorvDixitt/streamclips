@@ -14,8 +14,8 @@ discover -> chat -> signals -> (agent picks) -> render -> review -> package
 ## What you get per clip
 
 `clip.mp4` (1080x1920, face panel + gameplay, hook text, word-pop captions, campaign overlay, bleeps, -14 LUFS), `thumb.jpg`,
-`captions.srt`, paste-ready `post_<platform>.txt`, `checklist.md` with the campaign's rules and your posting slot, `review.json` proving
-the checks, and a row in `index.csv`. Days are folders; `README.md` per day and `MEMORY.md` per campaign keep the agent's memory.
+`captions.srt`, a `README.md` that says what to do, one `post_<platform>.md` per platform (steps + exact caption + the campaign's rules + posting slot),
+`review.json` proving the checks, and a row in `index.csv`. Days are folders; `README.md` per day and `MEMORY.md` per campaign keep the agent's memory.
 
 ## Install (tell your agent: "install the streamclips skill from <repo url>")
 

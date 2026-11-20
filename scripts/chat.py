@@ -15,19 +15,18 @@ import argparse
 import datetime as dt
 import glob
 import json
-import os
 import re
 import signal
 import socket
 import ssl
 import subprocess
-import sys
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
 
-from common import StepError, find_campaign, key, main_guard, now_iso, out, parse_time, read_json, write_json
+from common import StepError, find_campaign, key, main_guard, now_iso, out, parse_time, write_json, ytdlp_base
 from fetch import parse_url, source_dir
 
 UA = "streamclips/0.1"
@@ -52,7 +51,8 @@ class Writer:
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
         self.live = live
-        self.f = open(path, "a", encoding="utf-8")
+        # replay: rewrite (a re-run must not duplicate every message); live: append (collector restarts continue the file)
+        self.f = open(path, "a" if live else "w", encoding="utf-8")
         self.n = 0
         self.seen: set[str] = set()
 
@@ -76,6 +76,7 @@ class Writer:
 def twitch_replay(vid: str, start: float, end: float | None, w: Writer) -> dict:
     off = int(start)
     calls = 0
+    errors = 0
     last_err = None
     while end is None or off < end:
         body = [{"operationName": "VideoCommentsByOffsetOrCursor", "variables": {"videoID": vid, "contentOffsetSeconds": off},
@@ -92,8 +93,12 @@ def twitch_replay(vid: str, start: float, end: float | None, w: Writer) -> dict:
         calls += 1
         if r[0].get("errors"):
             last_err = r[0]["errors"][0].get("message")
+            errors += 1
+            if errors >= 20:
+                break
             off += 5
             continue
+        errors = 0
         comments = (r[0]["data"].get("video") or {}).get("comments")
         if not comments:
             break
@@ -111,9 +116,24 @@ def twitch_replay(vid: str, start: float, end: float | None, w: Writer) -> dict:
             last = max(last, int(n["contentOffsetSeconds"]))
         if not comments["pageInfo"].get("hasNextPage") and last <= off:
             break
+        if new and last <= off:
+            # more than one page of comments inside this second: follow the cursor once before moving on
+            try:
+                r2 = _post("https://gql.twitch.tv/gql", [{"operationName": "VideoCommentsByOffsetOrCursor",
+                           "variables": {"videoID": vid, "cursor": edges[-1]["cursor"]},
+                           "extensions": {"persistedQuery": {"version": 1, "sha256Hash": TWITCH_COMMENTS_HASH}}}], {"Client-ID": TWITCH_CLIENT_ID})
+                calls += 1
+                for e in (((r2[0].get("data") or {}).get("video") or {}).get("comments") or {}).get("edges", []):
+                    n = e["node"]
+                    w.add(n["contentOffsetSeconds"], (n.get("commenter") or {}).get("displayName") or "?",
+                          "".join(f.get("text", "") for f in n["message"]["fragments"]), n["id"])
+            except Exception:
+                pass
         off = last if (new and last > off) else off + 3
         if calls % 50 == 0:
             w.f.flush()
+    if w.n == 0 and last_err:
+        raise StepError(f"Twitch replay chat returned nothing ({last_err}). Twitch may have changed its endpoint; use audio+speech signals.")
     return {"calls": calls, "last_error": last_err, "covered_to_s": off}
 
 
@@ -121,7 +141,7 @@ def twitch_replay(vid: str, start: float, end: float | None, w: Writer) -> dict:
 
 
 def ytdlp_live_chat_file(url: str, outbase: Path, timeout: int | None) -> list[Path]:
-    cmd = [sys.executable, "-m", "yt_dlp", "--no-warnings", "--skip-download", "--write-subs", "--sub-langs", "live_chat", "-o", str(outbase), url]
+    cmd = ytdlp_base() + ["--skip-download", "--write-subs", "--sub-langs", "live_chat", "-o", str(outbase), url]
     try:
         subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -166,13 +186,18 @@ def yt_api(path, **params):
 
 
 def youtube_live(vid: str, w: Writer, poll_s: float, duration_s: float, meta_path: Path) -> dict:
-    v = yt_api("videos", part="liveStreamingDetails,snippet", id=vid)["items"]
+    try:
+        v = yt_api("videos", part="liveStreamingDetails,snippet", id=vid)["items"]
+    except urllib.error.HTTPError as e:
+        raise StepError(f"YouTube API {e.code} on videos.list ({'quota exceeded' if e.code == 403 else 'error'})")
     if not v:
         raise StepError("video not found")
     ls = v[0].get("liveStreamingDetails", {})
     chat_id = ls.get("activeLiveChatId")
     if not chat_id:
         raise StepError("no activeLiveChatId: stream is not live (or chat disabled)")
+    if not ls.get("actualStartTime"):
+        raise StepError("stream has not started yet (upcoming); start the collector once it is live")
     t0 = dt.datetime.fromisoformat(ls["actualStartTime"].replace("Z", "+00:00"))
     write_json(meta_path, {"platform": "youtube", "id": vid, "t0": t0.isoformat(), "collector": "youtube_api", "started": now_iso()})
     token = None
@@ -187,13 +212,16 @@ def youtube_live(vid: str, w: Writer, poll_s: float, duration_s: float, meta_pat
             params["pageToken"] = token
         try:
             r = yt_api("liveChat/messages", **params)
-        except urllib.error.HTTPError as e:  # type: ignore[attr-defined]
+        except urllib.error.HTTPError as e:
             body = e.read().decode(errors="ignore")[:200]
             if e.code == 403 and "quota" in body.lower():
-                return {"calls": calls, "quota_units": units, "ended": "quota exceeded; switch to yt-dlp fallback"}
+                raise StepError(f"YouTube API quota exceeded after {calls} calls ({units} units)")  # caller falls back to yt-dlp
             if e.code in (403, 404):
                 return {"calls": calls, "quota_units": units, "ended": f"chat ended ({e.code})"}
             time.sleep(5)
+            continue
+        except (urllib.error.URLError, TimeoutError, OSError):
+            time.sleep(10)
             continue
         calls += 1
         units += 5
@@ -216,14 +244,22 @@ def youtube_live_ytdlp(url: str, vid: str, w: Writer, duration_s: float, sdir: P
     outbase = sdir / "ytdlp_live"
     t0 = dt.datetime.now(dt.timezone.utc)
     write_json(meta_path, {"platform": "youtube", "id": vid, "t0": t0.isoformat(), "collector": "yt-dlp", "started": now_iso()})
-    proc = subprocess.Popen([sys.executable, "-m", "yt_dlp", "--no-warnings", "--skip-download", "--write-subs", "--sub-langs", "live_chat", "-o", str(outbase), url],
+    proc = subprocess.Popen(ytdlp_base() + ["--skip-download", "--write-subs", "--sub-langs", "live_chat", "-o", str(outbase), url],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     deadline = time.time() + duration_s
+    seen_lines: dict[str, int] = {}
     try:
         while time.time() < deadline and proc.poll() is None:
             time.sleep(20)
-            files = [Path(p) for p in glob.glob(str(outbase) + ".live_chat.json*")]
-            parse_ytdlp_chat(files, w, t0)
+            for fp in [Path(p) for p in glob.glob(str(outbase) + ".live_chat.json*")]:
+                lines = fp.read_text(encoding="utf-8", errors="ignore").splitlines()
+                done = seen_lines.get(str(fp), 0)
+                if len(lines) > done:
+                    tmp = fp.with_suffix(".delta")
+                    tmp.write_text("\n".join(lines[done:]), encoding="utf-8")
+                    parse_ytdlp_chat([tmp], w, t0)
+                    tmp.unlink(missing_ok=True)
+                    seen_lines[str(fp)] = len(lines)
             w.f.flush()
     finally:
         proc.terminate()
@@ -321,9 +357,11 @@ def main() -> None:
                 else:
                     info = youtube_live_ytdlp(a.url, vid, w, a.duration, sdir, meta_path)
             elif platform == "twitch":
+                if vid.isdigit():
+                    raise StepError("that is a Twitch VOD url; use chat.py replay")
                 info = twitch_live(vid, w, a.duration, meta_path)
             else:
-                raise StepError("Kick live chat is not implemented; use the Twitch or YouTube simulcast.")
+                raise StepError("Kick live chat is not implemented; use the Twitch or YouTube simulcast (--chat-url).")
     finally:
         w.close()
     out({"ok": True, "chat_file": str(chat_path), "messages_written": w.n, **info})

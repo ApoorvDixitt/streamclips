@@ -11,12 +11,11 @@ Layouts: face-top (face panel + gameplay), fill (gameplay fills 9:16), fit (whol
 from __future__ import annotations
 
 import argparse
-import json
 import math
 import re
 from pathlib import Path
 
-from common import FONTS_DIR, StepError, duration, ffmpeg_bin, find_campaign, hms, hw_encoder, load_yaml, main_guard, out, probe, read_json, run, slug, write_json
+from common import FONTS_DIR, StepError, duration, ffmpeg_bin, ffpath, find_campaign, hms, hw_encoder, load_yaml, main_guard, out, parse_time, probe, read_json, run, slug, today, video_stream, write_json
 
 W, H = 1080, 1920
 FPS = 30
@@ -32,10 +31,10 @@ TEXT_ML, TEXT_MR = SAFE["left"] + 10, SAFE["right"] + 10  # ASS margins so text 
 
 
 def mask_word(w: str) -> str:
-    core = re.sub(r"[^A-Za-z']", "", w)
-    if core and PROFANITY.match(core):
-        tail = re.sub(r"[A-Za-z']", "", w)
-        return core[0] + "*" * (len(core) - 1) + tail
+    m = re.match(r"^([^A-Za-z']*)([A-Za-z']+)([^A-Za-z']*)$", w)
+    if m and PROFANITY.match(m.group(2)):
+        core = m.group(2)
+        return m.group(1) + core[0] + "*" * (len(core) - 1) + m.group(3)
     return w
 
 
@@ -94,7 +93,7 @@ def build_ass(words: list[dict], clip_start: float, clip_len: float, hook: str |
 ScriptType: v4.00+
 PlayResX: {W}
 PlayResY: {H}
-WrapStyle: 2
+WrapStyle: 0
 ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
@@ -118,7 +117,7 @@ def build_filter(spec: dict, src_w: int, src_h: int, ass_path: Path, overlay_png
     zoom = spec.get("zoom_at_rel")
     inputs: list[str] = []
     f = [f"[0:v]fps={FPS},format=yuv420p,split=3[bgsrc][gsrc][fsrc]"]
-    f.append(f"[bgsrc]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},gblur=sigma=42,eq=brightness=-0.15:saturation=1.1[bg]")
+    f.append(f"[bgsrc]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,gblur=sigma=10,scale={W}:{H}:flags=bicubic,eq=brightness=-0.15:saturation=1.1[bg]")
     # gameplay crop: avoid the facecam strip when it sits on the left
     if layout == "face-top":
         gh = ZONE["game_h"]
@@ -126,9 +125,11 @@ def build_filter(spec: dict, src_w: int, src_h: int, ass_path: Path, overlay_png
         ch = src_h
         cw = int(min(src_w, ch * aspect)) // 2 * 2
         cx = (src_w - cw) // 2
-        if fc and fc["x"] < 0.5 and fc["y"] < 0.5:
+        if fc and fc["x"] < 0.5:
             cx = max(cx, int(math.ceil((fc["x"] + fc["w"]) * src_w + 0.06 * src_w)))  # alerts spill right of the cam
             cx = min(cx, src_w - cw)
+        elif fc:  # cam on the right: crop from the left side
+            cx = min(cx, max(0, int(fc["x"] * src_w - 0.06 * src_w) - cw))
         f.append(f"[gsrc]crop={cw}:{ch}:{cx}:0,scale={W}:{gh}:flags=lanczos,setsar=1[g0]")
         gy = ZONE["game_top"]
     elif layout == "fill":
@@ -173,7 +174,7 @@ def build_filter(spec: dict, src_w: int, src_h: int, ass_path: Path, overlay_png
         f.append(f"[1:v]crop={x1 - x0}:{y1 - y0}:{x0}:{y0},scale={ow}:{oh}[ov]")
         f.append(f"[{last}][ov]overlay=(W-w)/2:{oy}:shortest=1[c3]")
         last = "c3"
-    f.append(f"[{last}]ass='{str(ass_path).replace(chr(39), chr(92) + chr(39))}':fontsdir='{FONTS_DIR}'[v]")
+    f.append(f"[{last}]ass=filename={ffpath(ass_path)}:fontsdir={ffpath(FONTS_DIR)}[v]")
     # audio
     expr = "+".join(f"between(t,{a:.2f},{b:.2f})" for a, b in bleeps) or "0"
     chain = [f"[0:a]aresample=48000,volume='if({expr},0,1)':eval=frame[a0]"]
@@ -212,31 +213,46 @@ def cmd_spec(a) -> None:
         raise StepError(f"candidate {a.candidate} not in {sdir / 'candidates.json'}")
     if not c.get("segment"):
         raise StepError("candidate has no segment yet: run fetch.py for its time range, then signals.py --segment")
-    start = float(a.start) if a.start else c["start_t"]
-    end = float(a.end) if a.end else c["end_t"]
+    start = parse_time(a.start) if a.start else c["start_t"]
+    end = parse_time(a.end) if a.end else c["end_t"]
     clip = cfg["clip"]
     if end - start < clip["min_seconds"] or end - start > clip["max_seconds"]:
         raise StepError(f"clip length {end - start:.1f}s outside campaign limits {clip['min_seconds']}-{clip['max_seconds']}s")
     if FILLER_HOOK.match(a.hook or ""):
         raise StepError("hook starts with a filler opener; see references/hooks.md")
-    out_dir = Path(a.out_dir) if a.out_dir and Path(a.out_dir).is_absolute() else campaign / (a.out_dir or f"{cfg.get('created')}/draft-{slug(a.hook or c['id'])}")
+    if a.out_dir:
+        out_dir = Path(a.out_dir) if Path(a.out_dir).is_absolute() else campaign / a.out_dir
+    else:
+        day = campaign / today()
+        day.mkdir(exist_ok=True)
+        nums = [int(m.group(1)) for d in day.iterdir() if d.is_dir() for m in [re.match(r"(\d+)-", d.name)] if m]
+        out_dir = day / f"{(max(nums) + 1 if nums else 1):02d}-{slug(a.hook or c['id'], 40)}"
     out_dir.mkdir(parents=True, exist_ok=True)
     words = c.get("words") or []
+    layout = a.layout or clip.get("layout", "face-top")
+    if layout == "face-top" and not clip.get("facecam_region"):
+        layout = "fill"  # no cam region calibrated: never leave a blank panel
     spec = {
         "campaign": str(campaign), "source_dir": str(sdir), "source": str(sdir / "segments" / c["segment"]), "offset_s": c["offset_s"],
         "candidate": c["id"], "start_t": round(start, 2), "end_t": round(end, 2), "peak_t": c["peak_t"],
         "hook": a.hook, "hook_seconds": float(cfg["clip"].get("hook_seconds", 2)) + 0.6,
-        "layout": a.layout or clip.get("layout", "face-top"), "facecam_region": clip.get("facecam_region"),
+        "layout": layout, "facecam_region": clip.get("facecam_region"),
         "zoom": bool(clip.get("zoom_at_peak", True)), "zoom_at_rel": round((float(a.zoom_at) if a.zoom_at else c["peak_t"]) - start, 2),
         "captions": clip.get("captions", "word_pop"), "mask_profanity": bool(clip.get("mask_profanity", True)), "bleep_profanity": bool(clip.get("bleep_profanity", True)),
         "audio_mode": "voiceover" if a.voiceover else "original",
         "voiceover": {"text": a.voiceover, "at": 0.0, "voice_id": cfg["audio"].get("voice_id")} if a.voiceover else None,
-        "overlay": ({**cfg["overlay"], "file": str(campaign / cfg["overlay"]["file"])} if cfg.get("overlay", {}).get("file") else {"file": None, "required": False}),
+        "overlay": ({**cfg["overlay"], "file": str(campaign / cfg["overlay"]["file"])} if cfg.get("overlay", {}).get("file")
+                    else {"file": None, "required": bool(cfg.get("overlay", {}).get("required"))}),
         "words": words, "words_locked": False, "creator_name": cfg.get("creator", {}).get("name", ""), "names": list(clip.get("names", []) or []),
         "language": clip.get("language", "en"), "out": str(out_dir / "clip.mp4"),
     }
     if spec["audio_mode"] == "voiceover" and cfg["audio"].get("mode") != "voiceover_allowed":
         raise StepError("campaign audio.mode is 'original': voiceover not allowed for this campaign")
+    if spec["overlay"]["required"] and not spec["overlay"]["file"]:
+        raise StepError("campaign says overlay.required but overlay.file is not set; add the file with campaign.py set overlay.file=brief/<name>.png")
+    vo_max = int(cfg["audio"].get("voiceover_max_words") or 0)
+    if a.voiceover and vo_max and len(a.voiceover.split()) > vo_max:
+        raise StepError(f"voiceover line has {len(a.voiceover.split())} words; campaign limit is {vo_max}")
     write_json(out_dir / "spec.json", spec)
     out({"ok": True, "spec": str(out_dir / "spec.json"), "clip_len_s": round(end - start, 2), "words": len(words),
          "note": "edit spec.json if needed (start_t/end_t/hook/zoom_at_rel), then: render.py build --spec ..."})
@@ -250,8 +266,7 @@ def cmd_build(a) -> None:
     src = Path(spec["source"])
     if not src.exists():
         raise StepError(f"source missing: {src}")
-    info = probe(src)
-    vs = next(s for s in info["streams"] if s["codec_type"] == "video")
+    vs = video_stream(probe(src))
     src_w, src_h = int(vs["width"]), int(vs["height"])
     local_start = spec["start_t"] - spec["offset_s"]
     clip_len = spec["end_t"] - spec["start_t"]
@@ -263,13 +278,17 @@ def cmd_build(a) -> None:
         from transcribe import transcribe_window
 
         names = [n for n in ([spec.get("creator_name", "")] + list(spec.get("names") or [])) if n]
-        tr = transcribe_window(str(src), local_start, local_start + clip_len, spec.get("language") or "en", "final", names)
+        lang = spec.get("language") or "en"
+        tr = transcribe_window(str(src), local_start, local_start + clip_len, None if lang == "auto" else lang, "final", names)
         words = [{**w, "start": round(w["start"] + spec["start_t"], 2), "end": round(w["end"] + spec["start_t"], 2)} for w in tr["words"]]
         spec["words"] = words
         spec["transcript"] = {"engine": tr["engine"], "text": tr["text"], "second_pass_text": tr.get("second_pass_text", ""),
                               "gaps_rel": tr.get("gaps", []), "merged_from_second_pass": tr.get("merged_from_second_pass", 0)}
-        write_json(out_dir_for(spec_path) / "transcript.json", {**tr, "clip_start_t": spec["start_t"],
-                   "how_to_fix": "Edit spec.json 'words' (text/start/end, times are stream seconds), set \"words_locked\": true, re-run render.py build."})
+        write_json(out_dir_for(spec_path) / "transcript.json", {
+            "engine": tr["engine"], "text": tr["text"], "second_pass_text": tr.get("second_pass_text", ""),
+            "gaps_rel": tr.get("gaps", []), "clip_start_t": spec["start_t"],
+            "words": words,  # stream seconds: identical shape to spec.json 'words', copy back after editing
+            "how_to_fix": "Edit 'words' (word/start/end in stream seconds) in spec.json, set \"words_locked\": true, re-run render.py build."})
     bleeps = []
     if spec.get("bleep_profanity", True):
         for w in words:

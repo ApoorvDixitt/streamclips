@@ -23,18 +23,27 @@ ln -s ~/streamclips ~/.kiro/skills/streamclips      # Windows: mklink /D or copy
 ## 2. Python environment (agent does this)
 
 ```bash
+# macOS / Linux
 cd <skill folder>
 python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt        # Windows: .venv\Scripts\pip
-# Apple Silicon only, optional local transcription fallback:
-.venv/bin/pip install mlx-whisper
+.venv/bin/pip install -r requirements.txt
 .venv/bin/python scripts/doctor.py
+# Apple Silicon only, optional offline transcription fallback: .venv/bin/pip install mlx-whisper
+# tests: .venv/bin/pip install -r requirements-dev.txt && .venv/bin/python -m pytest -q tests
+```
+```powershell
+# Windows (PowerShell)
+cd <skill folder>
+py -3 -m venv .venv
+.venv\Scripts\pip install -r requirements.txt
+.venv\Scripts\python scripts\doctor.py
 ```
 
 `static-ffmpeg` downloads an ffmpeg build with caption support on first use (~80 MB). Homebrew/apt ffmpeg often lacks
 `libass`; `doctor.py` tells you. Set `FFMPEG_BIN` to override.
 
-Always run scripts with the venv Python: `.venv/bin/python scripts/<name>.py` (Windows `.venv\Scripts\python`).
+Always run scripts with the venv Python: `.venv/bin/python scripts/<name>.py` (Windows `.venv\Scripts\python scripts\<name>.py`).
+yt-dlp needs a JavaScript runtime for YouTube (Deno preferred, Node.js works; the scripts pass `--js-runtimes node` automatically when only Node exists).
 
 ## 3. Keys: ask the user, never store them
 
@@ -49,12 +58,14 @@ Always run scripts with the venv Python: `.venv/bin/python scripts/<name>.py` (W
 > - Linux (bash): same lines in `~/.bashrc`.
 > - Windows: Settings -> System -> About -> Advanced system settings -> Environment Variables -> User variables -> New; or in PowerShell
 >   `setx GROQ_API_KEY "..."`. Open a new terminal afterwards.
+> If your agent app was launched from the Dock/Start menu it may not read shell profiles. Then use the key file instead:
+> create `~/.config/streamclips/env` (Windows: `%USERPROFILE%\.config\streamclips\env`) with one `KEY=value` per line; the scripts read it.
 > Then start a new agent session (the agent only sees variables that existed when it started) and tell me "keys set".
 
 Then re-run `doctor.py`. If the user pastes a key into chat anyway, ask them to rotate it afterwards and still put it in the environment.
 The agent's own process must have the variables: if the agent was started before the keys were added, ask the user to restart the agent session.
 
-Optional: `FFMPEG_BIN`, `STREAMCLIPS_GROQ_STT` (default `whisper-large-v3-turbo`), `STREAMCLIPS_MLX_MODEL`.
+Optional: `FFMPEG_BIN`, `STREAMCLIPS_MLX_MODEL`, `STREAMCLIPS_KEY_FILE` (default `~/.config/streamclips/env`), `STREAMCLIPS_NVENC=0`.
 
 ## 4. Where clips live (ask once)
 
@@ -101,7 +112,7 @@ render one clip -> review -> package. Show the user the `frames.jpg` and the cli
 ## Edge cases
 
 - Python 3.13 works; `chat-downloader` style libraries do not, which is why chat is implemented natively.
-- No Node/Deno: yt-dlp cannot read YouTube. Install Node.js.
+- No Deno/Node: yt-dlp cannot read YouTube. Install Deno (https://deno.com) or Node.js.
 - Corporate proxy / region blocks: streamlink and yt-dlp honour `HTTPS_PROXY`.
 - Low disk: replays are fetched per window and `watch.py` prunes its buffer (`--keep-minutes`).
 - 8 GB RAM machines: do not run two renders at once; local mlx-whisper `small` fits, `large` does not.

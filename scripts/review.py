@@ -3,7 +3,7 @@
 
   review.py --clip-dir <campaign>/2026-11-21/01-left-jason-behind
 
-Checks: duration limits, 1080x1920 @30fps, overlay visible on every sampled frame (pixel match), loudness (-14 LUFS +-2),
+Checks: duration limits, 1080x1920 @30fps, overlay visible on every sampled frame (pixel match), loudness (-14 LUFS +-2.5), safe zone,
 hook present in first seconds, captions present, profanity masked, caption text rules (from package later).
 PASS/FAIL per check; the agent must still watch the frame sheet (frames.jpg) before approving.
 """
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-from common import StepError, duration, ffmpeg_bin, find_campaign, load_yaml, main_guard, out, probe, read_json, write_json
+from common import StepError, duration, ffmpeg_bin, find_campaign, fps_of, load_yaml, main_guard, out, probe, read_json, video_stream, write_json
 
 W, H = 1080, 1920
 
@@ -111,9 +111,9 @@ def main() -> None:
     tgt = lim.get("target_seconds", [15, 35])
     add("duration_in_target", tgt[0] <= dur <= tgt[1], f"target {tgt[0]}-{tgt[1]}s", hard=False)
     info = probe(clip)
-    vs = next(s for s in info["streams"] if s["codec_type"] == "video")
+    vs = video_stream(info)
     add("format_1080x1920", int(vs["width"]) == W and int(vs["height"]) == H, f"{vs['width']}x{vs['height']}")
-    add("fps_30", abs(eval(vs.get("r_frame_rate", "0/1")) - 30) < 0.6, vs.get("r_frame_rate"), hard=False)
+    add("fps_30", abs(fps_of(vs) - 30) < 0.6, vs.get("r_frame_rate"), hard=False)
     add("has_audio", any(s["codec_type"] == "audio" for s in info["streams"]))
     lufs = measure_loudness(clip)
     add("loudness_-14LUFS", lufs is not None and -16.5 <= lufs <= -11.5, f"{lufs:.1f} LUFS" if lufs is not None else "unmeasured", hard=False)
@@ -126,10 +126,14 @@ def main() -> None:
         else:
             scores = [round(overlay_visible(grab(clip, t), ref), 2) for t in times]
             add("overlay_visible_all_frames", min(scores) >= 0.85, f"match per sampled frame: {scores}")
-    add("hook_present", bool(spec.get("hook")) and spec.get("hook_seconds", 0) >= 1.5, spec.get("hook", ""))
-    add("captions_present", spec.get("captions") == "none" or (spec.get("rendered", {}).get("words_used", 0) >= 3),
-        f"{spec.get('rendered', {}).get('words_used', 0)} words")
     ass = (cdir / "captions.ass").read_text(encoding="utf-8") if (cdir / "captions.ass").exists() else ""
+    hook_events = [l for l in ass.splitlines() if l.startswith("Dialogue: 1,")]
+    cap_events = [l for l in ass.splitlines() if l.startswith("Dialogue: 0,")]
+    add("hook_present", bool(spec.get("hook")) and bool(hook_events), spec.get("hook", "") if hook_events else "no hook event in captions.ass")
+    add("captions_present", spec.get("captions") == "none" or len(cap_events) >= 3, f"{len(cap_events)} caption events")
+    # caption coverage: share of the clip's speech words that are inside the clip window (gaps are reported by render)
+    gaps = (spec.get("transcript") or {}).get("gaps_rel", [])
+    add("no_uncaptioned_speech", not gaps, f"possible uncaptioned speech at {gaps}" if gaps else "", hard=False)
     unmasked = re.findall(r"\b(shit|fuck\w*|bitch\w*)\b", ass, re.I)
     add("profanity_masked", not unmasked or not lim.get("mask_profanity", True), f"unmasked: {unmasked[:3]}" if unmasked else "")
     add("not_raw_recording", spec.get("layout") in ("face-top", "fill", "fit") and bool(spec.get("hook")) and spec.get("captions") != "none",

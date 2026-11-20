@@ -23,9 +23,9 @@ from common import StepError, duration, ffmpeg_bin, find_campaign, load_yaml, ma
 
 BIN = 10.0
 REACTIONS = {
-    "laugh": re.compile(r"(lma+o|lmfao|lo+l|haha|😂|🤣|💀|kekw|omegalul|lul\b|dead|crying|im dying|i'm dying)", re.I),
-    "shock": re.compile(r"(omg|oh my god|no way|wtf|what the|bruh|holy|noo+|oh no|😱|nah\b|huh\?|wait what|ayo)", re.I),
-    "hype": re.compile(r"(let'?s go+|lesgo|pog|insane|cooked|clip (it|that)|clip\b|🔥|goat|w\b|crazy|wild|sheesh)", re.I),
+    "laugh": re.compile(r"(lma+o|lmfao|\blo+l\b|haha|😂|🤣|💀|kekw|omegalul|\blul\b|\bdead\b|\bcrying\b|im dying|i'm dying)", re.I),
+    "shock": re.compile(r"(\bomg\b|oh my god|no way|\bwtf\b|what the|\bbruh\b|\bholy\b|\bnoo+\b|oh no|😱|\bnah\b|huh\?|wait what|\bayo\b)", re.I),
+    "hype": re.compile(r"(let'?s go+|lesgo|\bpog|insane|\bcooked\b|clip (it|that)|\bclip\b|🔥|\bgoat\b|\bw\b|\bcrazy\b|\bwild\b|sheesh)", re.I),
 }
 SPAM_TOKEN = re.compile(r"^[\W_]*([0-9]+|[a-z])[\W_]*$", re.I)
 DIGITS = re.compile(r"^[\d\s!.]+$")
@@ -38,14 +38,20 @@ DEFAULT_WEIGHTS = {"chat": 0.5, "audio": 0.35, "speech": 0.15}
 
 
 def load_chat(path: Path) -> list[dict]:
-    msgs = []
+    """Read chat.jsonl, dropping exact duplicates (a re-run collector appends)."""
+    msgs, seen = [], set()
     if not path.exists():
         return msgs
     for line in open(path, encoding="utf-8"):
         try:
-            msgs.append(json.loads(line))
+            m = json.loads(line)
         except Exception:
             continue
+        k = (round(float(m.get("t", 0)), 1), m.get("user"), m.get("text"))
+        if k in seen:
+            continue
+        seen.add(k)
+        msgs.append(m)
     return msgs
 
 
@@ -102,6 +108,8 @@ def audio_curve(media: Path, offset: float, step: float = 0.5) -> dict:
     cmd = [ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-i", str(media), "-vn", "-ac", "1", "-ar", "16000", "-f", "f32le", "-"]
     raw = subprocess.run(cmd, capture_output=True, timeout=1800).stdout
     x = np.frombuffer(raw, dtype=np.float32)
+    if x.nbytes > 1.5e9:
+        raise StepError("segment too long for audio analysis in one pass; fetch windows of <= 60 min")
     n = int(16000 * step)
     if len(x) < n * 4:
         raise StepError("audio too short for analysis")
@@ -109,13 +117,17 @@ def audio_curve(media: Path, offset: float, step: float = 0.5) -> dict:
     rms = np.sqrt(np.mean(frames ** 2, axis=1) + 1e-12)
     db = 20 * np.log10(rms + 1e-9)
     # voice/scream band ratio via FFT (300-4000 Hz vs total)
-    spec = np.abs(np.fft.rfft(frames * np.hanning(n), axis=1))
     freqs = np.fft.rfftfreq(n, 1 / 16000)
     band = (freqs >= 300) & (freqs <= 4000)
     hi = (freqs > 2000) & (freqs <= 6000)
-    tot = spec.sum(axis=1) + 1e-9
-    voice = spec[:, band].sum(axis=1) / tot
-    bright = spec[:, hi].sum(axis=1) / tot
+    win = np.hanning(n).astype(np.float32)
+    voice = np.empty(len(frames), dtype=np.float32)
+    bright = np.empty(len(frames), dtype=np.float32)
+    for i0 in range(0, len(frames), 2000):  # chunked: a 60-min segment never needs > ~250 MB
+        sp = np.abs(np.fft.rfft(frames[i0:i0 + 2000] * win, axis=1))
+        tot = sp.sum(axis=1) + 1e-9
+        voice[i0:i0 + 2000] = sp[:, band].sum(axis=1) / tot
+        bright[i0:i0 + 2000] = sp[:, hi].sum(axis=1) / tot
     # loudness z-score against a rolling 60 s median
     k = int(60 / step)
     med = np.array([np.median(db[max(0, i - k): i + k + 1]) for i in range(len(db))])
@@ -145,16 +157,18 @@ def audio_bins(ac: dict, t_min: float, nb: int) -> tuple[np.ndarray, np.ndarray]
 # ------------------------------------------------------------ frames / transcript
 
 
-def frame_sheet(media: Path, local_peak: float, dst: Path) -> None:
+def frame_sheet(media: Path, local_peak: float, dst: Path) -> bool:
     """2x2 sheet of frames at peak-6, -2, +1, +5 seconds (fast seeks, one ffmpeg call)."""
     dst.parent.mkdir(parents=True, exist_ok=True)
-    times = [max(0.0, local_peak - 6), max(0.0, local_peak - 2), local_peak + 1, local_peak + 5]
+    dur = duration(media)
+    times = [min(max(0.0, t), max(0.0, dur - 0.15)) for t in (local_peak - 6, local_peak - 2, local_peak + 1, local_peak + 5)]
     cmd = [ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error"]
     for t in times:
         cmd += ["-ss", f"{t:.2f}", "-i", str(media)]
     fc = "".join(f"[{i}:v]scale=640:-2,setsar=1[v{i}];" for i in range(4)) + "[v0][v1][v2][v3]xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0[o]"
     cmd += ["-filter_complex", fc, "-map", "[o]", "-frames:v", "1", "-q:v", "4", str(dst)]
     subprocess.run(cmd, capture_output=True, timeout=300)
+    return dst.exists()
 
 
 # ------------------------------------------------------------ main
@@ -170,11 +184,12 @@ def main() -> None:
     ap.add_argument("--lead", type=float, default=8)
     ap.add_argument("--tail", type=float, default=14)
     ap.add_argument("--no-transcribe", action="store_true")
-    ap.add_argument("--language", default="en")
+    ap.add_argument("--language", help="default: campaign clip.language")
     a = ap.parse_args()
     campaign = find_campaign(a.campaign)
     cfg = load_yaml(campaign / "campaign.yaml")
     weights = {**DEFAULT_WEIGHTS, **(cfg.get("signals", {}) or {}).get("weights", {})}
+    language = a.language or (cfg.get("clip", {}) or {}).get("language") or "en"
     sdir = Path(a.source) if Path(a.source).is_absolute() else campaign / a.source
     if not sdir.exists():
         raise StepError(f"source folder not found: {sdir}")
@@ -192,14 +207,15 @@ def main() -> None:
         if not msgs:
             raise StepError("no chat.jsonl and no --segment: nothing to analyse. Run chat.py first or pass a segment.")
         t_min, t_max = 0.0, max(m["t"] for m in msgs)
-    cc = chat_curve(msgs, t_min, t_max) if msgs else None
+    msgs_in_window = [m for m in msgs if t_min <= float(m.get("t", 0)) <= t_max]
+    cc = chat_curve(msgs, t_min, t_max) if msgs_in_window else None
     nb = cc["bins"] if cc else int(math.ceil((t_max - t_min) / BIN)) + 1
     chat_s = cc["score"] if cc else np.zeros(nb)
     audio_s, audio_peak = (np.zeros(nb), np.full(nb, np.nan))
     if seg_path:
         ac = audio_curve(seg_path, offset)
         audio_s, audio_peak = audio_bins(ac, t_min, nb)
-    have = {"chat": bool(msgs), "audio": seg_path is not None, "speech": False}
+    have = {"chat": bool(msgs_in_window), "audio": seg_path is not None, "speech": False}
     wsum = sum(w for k, w in weights.items() if have[k] and k != "speech") or 1.0
     total = (weights["chat"] * chat_s * have["chat"] + weights["audio"] * audio_s * have["audio"]) / wsum
     # agreement bonus when both signals fire in the same or neighbouring bin
@@ -237,15 +253,15 @@ def main() -> None:
         if seg_path:
             local_peak = peak - offset
             sheet = sdir / "frames" / f"{cid}.jpg"
-            frame_sheet(seg_path, local_peak, sheet)
-            c["frames"] = str(sheet.relative_to(campaign))
+            if frame_sheet(seg_path, local_peak, sheet):
+                c["frames"] = sheet.relative_to(campaign).as_posix()
             if not a.no_transcribe:
                 from transcribe import transcribe_window
 
                 names = [cfg.get("creator", {}).get("name", "")] + list((cfg.get("clip", {}) or {}).get("names", []) or [])
                 try:
                     tr = transcribe_window(str(seg_path), max(0.0, start - offset), min(seg_dur, end - offset + 4),
-                                           None if a.language == "auto" else a.language, "scan", [n for n in names if n])
+                                           None if language == "auto" else language, "scan", [n for n in names if n])
                     c["transcript"] = tr["text"]
                     c["words"] = [{**w, "start": round(w["start"] + start, 2), "end": round(w["end"] + start, 2)} for w in tr["words"]]
                     c["transcript_engine"] = tr["engine"]
@@ -264,13 +280,24 @@ def main() -> None:
         c["rank"] = r
     strong = [c for c in cands if c["score"] >= 0.55]
     solid = [c for c in cands if 0.35 <= c["score"] < 0.55]
-    existing = read_json(sdir / "candidates.json", {"candidates": []})
-    keep = {c["id"]: c for c in existing.get("candidates", []) if c.get("segment") != (seg_path.name if seg_path else None)}
+    existing = read_json(sdir / "candidates.json", {"candidates": []}).get("candidates", [])
+    final: list[dict] = []
+    used: set[int] = set()
     for c in cands:
-        old = keep.pop(c["id"], None) or next((v for k, v in list(keep.items()) if abs(v["peak_t"] - c["peak_t"]) < 20 and keep.pop(k)), None)
-        if old and old.get("agent"):
-            c["agent"] = old["agent"]  # preserve agent notes/decisions
-    merged = sorted([*keep.values(), *cands], key=lambda c: -c["score"])
+        match_i = next((i for i, v in enumerate(existing) if i not in used and (v["id"] == c["id"] or abs(v["peak_t"] - c["peak_t"]) < 20)), None)
+        if match_i is not None:
+            used.add(match_i)
+            old = existing[match_i]
+            if old.get("agent"):
+                c["agent"] = old["agent"]  # agent notes/decisions survive re-runs
+            if old.get("segment") and not c.get("segment"):
+                # a chat-only pass must not replace a candidate that already has audio/transcript/frames
+                old["components"]["chat"] = c["components"]["chat"]
+                old["chat_sample"], old["chat_label"] = c["chat_sample"], c["chat_label"]
+                c = old
+        final.append(c)
+    final += [v for i, v in enumerate(existing) if i not in used]
+    merged = sorted(final, key=lambda c: -c["score"])
     write_json(sdir / "candidates.json", {"updated": now_iso(), "weights": weights, "have": have,
                                            "window": {"t_min": t_min, "t_max": t_max}, "candidates": merged})
     out({

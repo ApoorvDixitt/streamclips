@@ -13,7 +13,7 @@
 | `chat_sample`, `chat_label` | what chat said and why (laugh, shock, hype) |
 | `transcript`, `words` | fast scan transcription (Groq turbo). Good enough to judge the moment; the final clip gets a thorough pass at build time |
 | `frames` | 2x2 sheet at peak -6/-2/+1/+5 s. **Look at it.** |
-| `agent` | your notes/decisions; preserved when signals re-runs |
+| `agent` | your notes/decisions; preserved when signals re-runs (matched by id or a peak within 20 s). A chat-only re-run never removes a candidate's transcript/frames. |
 
 ## How many clips?
 

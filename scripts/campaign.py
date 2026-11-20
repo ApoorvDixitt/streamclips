@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -30,7 +31,7 @@ DEFAULTS = {
     "source_priority": "auto",  # auto | live_first | replay_first
     "replay_max_age_days": 2,
     "platforms": ["tiktok", "instagram_reels", "youtube_shorts"],
-    "payout": {"cpm_usd": 1.0, "min_payout_usd": 5.0, "max_payout_usd": 300.0, "min_engagement_rate": 0.008},
+    "payout": {"cpm_usd": None, "min_payout_usd": None, "max_payout_usd": None, "min_engagement_rate": None},
     "clip": {
         "min_seconds": 8,
         "max_seconds": 59,
@@ -53,18 +54,22 @@ DEFAULTS = {
         "no_links": True,
         "template": "{hook}\n\n{required_text} {hashtags}",
     },
+    # Every rule below is null/empty until the brief sets it; null rules never appear in the user's post files.
     "rules": {
-        "max_posts_per_clip": 5,
-        "submit_within_minutes": 30,
-        "keep_public_days": 30,
-        "likes_visible": True,
-        "tier1_min_share": 0.40,
+        "max_posts_per_clip": None,
+        "submit_within_minutes": None,
+        "keep_public_days": None,
+        "likes_visible": None,
+        "tier1_min_share": None,
+        "new_account_warmup": None,  # true when the campaign/platform asks new accounts to warm up and post from the phone app
         "banned": [],
+        "banned_words": [],
         "preferred_moments": [],
         "notes": [],
     },
     "audience": {"tier1": ["US", "UK", "CA", "AU"], "posting_windows_et": ["11:00-14:00", "17:00-21:00"]},
-    "user_timezone": "Asia/Kolkata",
+    "signals": {"weights": {"chat": 0.5, "audio": 0.35, "speech": 0.15}},
+    "user_timezone": "",  # ask the user once (e.g. Asia/Kolkata, America/New_York); used for the times in post files
     "brief_text_file": "",
 }
 
@@ -89,15 +94,23 @@ Living notes the agent updates after every session. Keep it short and factual.
 
 INDEX_HEADER = [
     "clip_id", "date", "source_platform", "source_id", "start_s", "end_s", "duration_s", "hook",
-    "score", "signals", "layout", "audio_mode", "status", "posted_tiktok", "posted_reels", "posted_shorts",
-    "post_count", "views_tiktok", "views_reels", "views_shorts", "approved", "payout_usd", "notes",
+    "score", "signals", "layout", "audio_mode", "status", "posted_tiktok", "posted_reels", "posted_shorts", "posted_x",
+    "post_count", "views_tiktok", "views_reels", "views_shorts", "views_x", "approved", "payout_usd", "notes",
 ]
 
 
+LIST_FIELDS = {"caption.hashtags", "clip.names", "rules.banned", "rules.banned_words", "rules.preferred_moments", "rules.notes",
+               "creator.extra_sources", "platforms", "audience.tier1", "audience.posting_windows_et"}
+
+
 def _deep_set(d: dict, dotted: str, value) -> None:
+    if dotted in LIST_FIELDS and isinstance(value, str):
+        value = [v for v in re.split(r"[,\s]+", value) if v] if dotted in ("caption.hashtags", "platforms", "audience.tier1") else [value]
     keys = dotted.split(".")
     for k in keys[:-1]:
-        d = d.setdefault(k, {})
+        if not isinstance(d.get(k), dict):
+            d[k] = {}
+        d = d[k]
     d[keys[-1]] = value
 
 
@@ -107,14 +120,16 @@ def _coerce(v: str):
         return s.lower() == "true"
     if s.lower() in ("null", "none", ""):
         return None
-    try:
-        return json.loads(s)
-    except Exception:
-        pass
-    try:
-        return int(s) if s.lstrip("-").isdigit() else float(s)
-    except Exception:
-        return s
+    if s.startswith(("[", "{")):
+        try:
+            return json.loads(s)
+        except Exception:
+            return s
+    if re.fullmatch(r"-?\d+", s) and not (len(s) > 1 and s.startswith("0")):
+        return int(s)
+    if re.fullmatch(r"-?\d+\.\d+", s):
+        return float(s)
+    return s
 
 
 def campaigns_root(location: str | Path) -> Path:
@@ -141,13 +156,25 @@ def cmd_new(a) -> None:
     (folder / "sources").mkdir(exist_ok=True)
     cfg = json.loads(json.dumps(DEFAULTS))
     cfg.update({"name": a.name, "slug": sl, "created": today(), "game": a.game or ""})
-    yt = a.youtube or ""
+    yt = (a.youtube or "").strip()
+    m = re.search(r"youtube\.com/(@[\w.-]+)", yt) or re.search(r"youtube\.com/channel/(UC[\w-]+)", yt)
+    if m:
+        yt = m.group(1)
     if yt.startswith("@"):
         cfg["creator"]["youtube_handle"] = yt
     elif yt.startswith("UC"):
         cfg["creator"]["youtube_channel_id"] = yt
-    cfg["creator"]["twitch_login"] = a.twitch or ""
-    cfg["creator"]["name"] = a.creator or a.name.split()[0]
+    elif yt:
+        raise StepError(f"--youtube must be @handle, UC... id, or a channel URL; got {yt}")
+    tw = (a.twitch or "").strip()
+    m = re.search(r"twitch\.tv/([A-Za-z0-9_]+)", tw)
+    cfg["creator"]["twitch_login"] = (m.group(1) if m else tw).lower()
+    kick = (a.kick or "").strip()
+    m = re.search(r"kick\.com/([A-Za-z0-9_-]+)", kick)
+    cfg["creator"]["kick_slug"] = (m.group(1) if m else kick).lower()
+    cfg["creator"]["name"] = a.creator or (a.name.split()[0] if a.name.split() else "creator")
+    cfg["listing"] = a.listing or ""
+    cfg["user_timezone"] = a.timezone or ""
     if a.brief:
         dst = folder / "brief" / "brief.txt"
         shutil.copy(a.brief, dst)
@@ -189,8 +216,18 @@ def validate(folder: Path) -> list[str]:
     if not (c.get("youtube_channel_id") or c.get("youtube_handle") or c.get("twitch_login") or c.get("kick_slug")):
         problems.append("creator: set at least one of youtube_channel_id / youtube_handle / twitch_login / kick_slug")
     ov = cfg.get("overlay", {})
-    if ov.get("required") and not (folder / ov.get("file", "")).exists():
-        problems.append(f"overlay.file not found: {ov.get('file')}")
+    if ov.get("required") and (not ov.get("file") or not (folder / ov["file"]).is_file()):
+        problems.append(f"overlay.required is true but overlay.file is missing or not a file: {ov.get('file')!r}")
+    for fld in ("caption.hashtags", "clip.names", "rules.banned", "rules.notes", "platforms"):
+        sect, _, leaf = fld.rpartition(".")
+        val = (cfg.get(sect, {}) if sect else cfg).get(leaf)
+        if val is not None and not isinstance(val, list):
+            problems.append(f"{fld} must be a list (use JSON: '{fld}=[\"a\",\"b\"]')")
+    if not cfg.get("user_timezone"):
+        problems.append("user_timezone is empty: ask the user (e.g. Asia/Kolkata) so post times are shown in their local time")
+    fc = cfg.get("clip", {}).get("facecam_region")
+    if fc is not None and (not isinstance(fc, dict) or not all(k in fc for k in ("x", "y", "w", "h"))):
+        problems.append("clip.facecam_region must be null or {x,y,w,h} fractions")
     cap = cfg.get("caption", {})
     if cap.get("no_links") and "http" in (cap.get("template") or ""):
         problems.append("caption.template contains a link but caption.no_links is true")
@@ -245,7 +282,8 @@ def cmd_day(a) -> None:
     if not readme.exists():
         readme.write_text(DAY_README.format(date=date, name=cfg.get("name", "")), encoding="utf-8")
     existing = sorted(p.name for p in day.iterdir() if p.is_dir())
-    out({"ok": True, "day_folder": str(day), "existing_clips": existing, "next_index": len(existing) + 1})
+    nums = [int(m.group(1)) for n in existing for m in [re.match(r"(\d+)-", n)] if m]
+    out({"ok": True, "day_folder": str(day), "existing_clips": existing, "next_index": (max(nums) + 1) if nums else 1})
 
 
 def main() -> None:
@@ -259,8 +297,11 @@ def main() -> None:
     n.add_argument("--brief")
     n.add_argument("--overlay")
     n.add_argument("--youtube", help="@handle or UC... channel id")
-    n.add_argument("--twitch")
+    n.add_argument("--twitch", help="login or channel URL")
+    n.add_argument("--kick", help="slug or channel URL")
     n.add_argument("--game")
+    n.add_argument("--listing", help="campaign page URL (printed in post files for submission)")
+    n.add_argument("--timezone", help="user's IANA timezone, e.g. Asia/Kolkata")
     n.set_defaults(fn=cmd_new)
     s = sub.add_parser("set")
     s.add_argument("--campaign")

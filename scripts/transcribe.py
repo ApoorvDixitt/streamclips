@@ -8,7 +8,7 @@ Modes
   scan   one fast pass (Groq whisper-large-v3-turbo). For scoring many candidates.
   final  for the clip that will be rendered: ffmpeg denoise (free) + names-only vocabulary prompt + two Groq passes
          (large-v3 and turbo) merged to fill gaps, plus a `gaps` list (speech energy with no words) for the agent to check.
-         Measured on a noisy GTA 6 window: 26 words raw -> 42 words with denoise + names prompt.
+         Measured on a noisy GTA 6 window: 18 words (scan) -> 47 words (final).
 
 Engines: groq (free tier, default), mlx (local Apple Silicon fallback when offline), scribe (ElevenLabs, opt-in only:
 `--engine scribe`; more accurate on game audio and labels speakers, but costs credits and needs a plan, so never automatic).
@@ -34,7 +34,8 @@ import numpy as np
 
 from common import StepError, ffmpeg_bin, key, main_guard, out, parse_time, write_json
 
-HALLUCINATIONS = re.compile(r"^(thank you\.?|thanks for watching\.?|subscribe\.?|bye\.?|you|\.|crashing.*|screaming.*|yelling.*|\[.*\]|\(.*\))$", re.I)
+# Whisper fillers: exact stock phrases, or whole-segment sound descriptions like "[screams]" / "(crashing sounds)".
+HALLUCINATIONS = re.compile(r"^(thank you\.?|thanks for watching\.?|subscribe\.?|bye\.?|you|\.|\[[^\]]*\]|\([^)]*\)|(crashing|screaming|yelling)( sounds?| noises?)?[.,!]*)$", re.I)
 UA = "streamclips/0.1"
 DENOISE = "highpass=f=100,lowpass=f=7000,afftdn=nf=-28:tn=1,dynaudnorm=f=150:g=15"
 
@@ -68,7 +69,11 @@ def _post(url: str, body: bytes, boundary: str, headers: dict, timeout: int = 18
         except urllib.error.HTTPError as e:
             msg = e.read().decode(errors="ignore")[:300]
             if e.code == 429 or e.code >= 500:
-                time.sleep(min(float(e.headers.get("retry-after", 2 ** attempt + 1)), 60))
+                try:
+                    wait = float(e.headers.get("retry-after", 2 ** attempt + 1))
+                except ValueError:
+                    wait = 2 ** attempt + 1
+                time.sleep(min(wait, 60))
                 continue
             raise StepError(f"{url.split('/')[2]} {e.code}: {msg}")
     raise StepError(f"{url.split('/')[2]}: rate limited repeatedly (Groq free tier ~8 audio-hours/day). Try later or --engine mlx.")

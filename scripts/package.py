@@ -20,6 +20,17 @@ from pathlib import Path
 from common import StepError, ffmpeg_bin, find_campaign, hms, load_yaml, main_guard, now_iso, out, read_json, write_json
 
 PLATFORM_NAMES = {"tiktok": "TikTok", "instagram_reels": "Instagram Reels", "youtube_shorts": "YouTube Shorts", "x": "X (Twitter)"}
+POST_COL = {"tiktok": "posted_tiktok", "instagram_reels": "posted_reels", "youtube_shorts": "posted_shorts", "x": "posted_x"}
+
+
+def submit_line(cfg: dict) -> str:
+    r = cfg.get("rules", {}) or {}
+    where = f" at {cfg['listing']}" if cfg.get("listing") else ""
+    if r.get("submit_within_minutes"):
+        return f"Within **{r['submit_within_minutes']} minutes** of posting, copy the post link and submit it to the campaign{where}."
+    return f"Copy the post link and submit it to the campaign{where} (check the campaign page for its deadline)."
+
+
 PLATFORM_STEPS = {
     "tiktok": ["Open TikTok on your phone, tap +, choose Upload, pick `clip.mp4`.",
                "Do not add TikTok's own captions (ours are burned in). Pick the cover from the first second.",
@@ -70,20 +81,20 @@ def local_time(post_at: str | None, tz_name: str) -> str:
         return "to be decided (ask the agent for today's posting plan)"
     try:
         t = dt.datetime.fromisoformat(post_at)
+    except Exception:
+        return post_at
+    if tz_name:
         try:
             from zoneinfo import ZoneInfo
 
             t = t.astimezone(ZoneInfo(tz_name))
         except Exception:
-            pass
-        return t.strftime("%a %d %b %Y, %H:%M (%Z)")
-    except Exception:
-        return post_at
+            return t.strftime("%a %d %b %Y, %H:%M %z") + f" (could not convert to {tz_name}; on Windows run: pip install tzdata)"
+    return t.strftime("%a %d %b %Y, %H:%M (%Z)")
 
 
 def post_md(platform: str, cfg: dict, hook: str, caption: str, meta: dict) -> str:
     name = PLATFORM_NAMES.get(platform, platform)
-    rules = cfg.get("rules", {})
     steps = PLATFORM_STEPS.get(platform, ["Upload `clip.mp4` and paste the caption below."])
     if platform == "youtube_shorts":
         title = hook if len(hook) <= 90 else hook[:87] + "..."
@@ -96,7 +107,8 @@ def post_md(platform: str, cfg: dict, hook: str, caption: str, meta: dict) -> st
 
 ## Steps
 {chr(10).join(f'{i}. {s}' for i, s in enumerate(steps, 1))}
-{len(steps) + 1}. Within **{rules.get('submit_within_minutes', 30)} minutes** of posting, copy the post link and submit it to the campaign. Then paste the link into `../../index.csv` (column `posted_{platform.split('_')[-1]}`) or tell the agent.
+{len(steps) + 1}. {submit_line(cfg)} Then tell the agent "posted <platform> <link>" so it records it (or paste it into `../../index.csv`, column `{POST_COL.get(platform, 'posted_' + platform)}`).
+{len(steps) + 2}. After 24-48 hours, tell the agent the view count ("views for {meta.get('clip_id', 'this clip')} on {name}: N") so it can learn what works.
 
 {copy_block}
 
@@ -110,7 +122,9 @@ def post_rules(cfg: dict) -> list[str]:
     r = cfg.get("rules", {}) or {}
     cap = cfg.get("caption", {}) or {}
     pay = cfg.get("payout", {}) or {}
-    out_: list[str] = ["- Post from the phone app (not a scheduler) if this account is new (first ~10 posts)."]
+    out_: list[str] = []
+    if r.get("new_account_warmup"):
+        out_.append("- New account? Follow the campaign's warm-up guide and post from the phone app (not a scheduler) for the first ~10 posts.")
     if r.get("keep_public_days"):
         out_.append(f"- Keep it public for at least {r['keep_public_days']} days." + (" Likes must stay visible." if r.get("likes_visible") else ""))
     elif r.get("likes_visible"):
@@ -128,7 +142,7 @@ def post_rules(cfg: dict) -> list[str]:
         out_.append(f"- The campaign wants at least {int(float(r['tier1_min_share']) * 100)} % of viewers from {', '.join(cfg.get('audience', {}).get('tier1', []))}.")
     for note in r.get("notes", []) or []:
         out_.append(f"- {note}")
-    return out_
+    return out_ or ["- No extra rules from the campaign for this post."]
 
 
 def describe_edit(cfg: dict, spec: dict) -> str:
@@ -163,9 +177,11 @@ A {dur:.0f}-second vertical clip from {cfg.get('creator', {}).get('name', 'the s
 
 ## What to do
 1. Watch `clip.mp4` once.
-2. Open the file for the platform you are posting to and follow it step by step:
+2. Get `clip.mp4` onto your phone (AirDrop / Google Drive / cable / Quick Share). Post from the phone app.
+3. Open the file for the platform you are posting to and follow it step by step:
 {chr(10).join(f'   - `post_{p}.md`' for p in posts)}
-3. After posting, submit the link to the campaign within {cfg.get('rules', {}).get('submit_within_minutes', 30)} minutes and record the link in `../../index.csv` (or tell the agent).
+4. After posting: {submit_line(cfg).replace('**', '')} Then tell the agent the link.
+5. After 24-48 h, tell the agent the view count so it learns what works.
 
 ## Files
 | File | What it is |
@@ -175,7 +191,7 @@ A {dur:.0f}-second vertical clip from {cfg.get('creator', {}).get('name', 'the s
 | `post_<platform>.md` | step-by-step posting instructions + the exact caption to copy |
 | `captions.srt` | subtitles file ({n_srt} cues), only if you want to upload captions separately |
 | `frames.jpg`, `frames_safe.jpg` | 6 frames of the clip; the green box in `frames_safe.jpg` is the area no app UI covers |
-| `transcript.json` | what was said (engine: {tr.get('engine', '?')}); `gaps_rel` lists seconds where speech may be missing captions |
+{('| `transcript.json` | what was said (engine: ' + str(tr.get('engine')) + '); `gaps_rel` lists seconds where speech may be missing captions |') if tr else ''}
 | `review.json` | automatic checks: {checks} |
 | `spec.json`, `captions.ass`, `metadata.json` | how the clip was built (for the agent) |
 
@@ -251,7 +267,14 @@ def main() -> None:
         if line not in txt:
             marker = "|---|--------|------|---------------|-------|--------|"
             txt = txt.replace(marker, marker + "\n" + line, 1) if marker in txt else txt + "\n" + line
-            readme.write_text(txt, encoding="utf-8")
+        if a.post_at:
+            plan_marker = "|------|----------|-----------------|-----------------|--------------|"
+            when = local_time(a.post_at, cfg.get("user_timezone", ""))
+            sub = f"+{(cfg.get('rules') or {}).get('submit_within_minutes')} min" if (cfg.get("rules") or {}).get("submit_within_minutes") else "see campaign"
+            plan_line = f"| {clip_id} | {', '.join(cfg.get('platforms', []))} | {when} | {a.audience or '-'} | {sub} |"
+            if plan_marker in txt and plan_line not in txt:
+                txt = txt.replace(plan_marker, plan_marker + "\n" + plan_line, 1)
+        readme.write_text(txt, encoding="utf-8")
     out({"ok": True, "clip_dir": str(cdir), "files": sorted(p.name for p in cdir.iterdir()), "caption": caption, "index": str(idx),
          "user_opens": str(cdir / "README.md")})
 

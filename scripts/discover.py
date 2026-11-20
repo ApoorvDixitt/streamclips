@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """List the creator's live streams and recent replays, and recommend what to clip first.
 
-  discover.py --campaign <dir> [--max-age-days 2] [--json]
+  discover.py --campaign <dir> [--max-age-days 2]
 
 Order of truth: YouTube Data API (measured, quota-cheap: ~3 units) -> yt-dlp (no key) -> Twitch GQL -> Kick.
 Recommendation follows campaign.yaml source_priority (auto | live_first | replay_first); see references/sourcing.md.
@@ -13,11 +13,10 @@ import datetime as dt
 import json
 import re
 import subprocess
-import sys
 import urllib.parse
 import urllib.request
 
-from common import StepError, find_campaign, key, load_yaml, main_guard, out
+from common import StepError, find_campaign, key, load_yaml, main_guard, out, ytdlp_base
 
 UA = "streamclips/0.1"
 TWITCH_CLIENT_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"  # Twitch's public web client id (anonymous, read-only)
@@ -110,7 +109,7 @@ def youtube_ytdlp(cfg: dict) -> list[dict]:
     if not c.get("youtube_handle") and not c.get("youtube_channel_id"):
         return []
     try:
-        r = subprocess.run([sys.executable, "-m", "yt_dlp", "--flat-playlist", "-J", "--playlist-end", "20", base + "/streams"],
+        r = subprocess.run(ytdlp_base() + ["--flat-playlist", "-J", "--playlist-end", "20", base + "/streams"],
                            capture_output=True, text=True, timeout=120)
         data = json.loads(r.stdout or "{}")
     except Exception:
@@ -143,16 +142,21 @@ def twitch_sources(cfg: dict) -> tuple[list[dict], list[str]]:
     if not u:
         return [], [f"Twitch user not found: {login}"]
     res = []
+    live_created = None
     if u.get("stream"):
         s = u["stream"]
+        live_created = dt.datetime.fromisoformat(s["createdAt"].replace("Z", "+00:00"))
         res.append({"platform": "twitch", "id": login, "url": f"https://www.twitch.tv/{login}", "type": "live", "title": s["title"],
                     "published_at": s["createdAt"], "started_at": s["createdAt"], "duration_s": None, "viewers": s["viewersCount"],
                     "views": None, "game": (s.get("game") or {}).get("name"), "live_chat_id": None, "age_hours": age_hours(s["createdAt"]), "chat_replay": "n/a"})
     for e in u["videos"]["edges"]:
         n = e["node"]
+        created = dt.datetime.fromisoformat(n["createdAt"].replace("Z", "+00:00"))
+        recording = bool(live_created and abs((created - live_created).total_seconds()) < 600)
         res.append({"platform": "twitch", "id": n["id"], "url": f"https://www.twitch.tv/videos/{n['id']}", "type": "replay", "title": n["title"],
                     "published_at": n["createdAt"], "started_at": n["createdAt"], "duration_s": n["lengthSeconds"], "viewers": None,
-                    "views": n["viewCount"], "game": (n.get("game") or {}).get("name"), "live_chat_id": None, "age_hours": age_hours(n["createdAt"]), "chat_replay": "yes"})
+                    "views": n["viewCount"], "game": (n.get("game") or {}).get("name"), "live_chat_id": None, "age_hours": age_hours(n["createdAt"]),
+                    "chat_replay": "yes", "still_recording": recording})
     return res, []
 
 
@@ -188,8 +192,9 @@ def recommend(cfg: dict, sources: list[dict], max_age_days: float) -> dict:
         replays_game = [s for s in replays if on_game(s)]
         if replays_game:
             replays = replays_game
-    # prefer Twitch replays (chat replay available), then YouTube replays by recency
-    replays.sort(key=lambda s: (0 if s.get("chat_replay") == "yes" else 1, s.get("age_hours") or 1e9))
+    # finished replays first (a still-recording VOD is the live stream; its chat replay covers only the part already streamed),
+    # then prefer Twitch replays (chat replay available), then recency
+    replays.sort(key=lambda s: (1 if s.get("still_recording") else 0, 0 if s.get("chat_replay") == "yes" else 1, s.get("age_hours") or 1e9))
     prio = cfg.get("source_priority", "auto")
     plan = []
     if prio == "live_first":
@@ -207,7 +212,7 @@ def recommend(cfg: dict, sources: list[dict], max_age_days: float) -> dict:
         "replays_in_window": replays,
         "steps": [{"mode": m, "platform": s["platform"], "id": s["id"], "url": s["url"], "title": s.get("title"),
                    "duration_s": s.get("duration_s"), "age_hours": s.get("age_hours"), "chat_replay": s.get("chat_replay"),
-                   "live_chat_id": s.get("live_chat_id")} for m, s in plan],
+                   "still_recording": s.get("still_recording", False), "live_chat_id": s.get("live_chat_id")} for m, s in plan],
     }
 
 

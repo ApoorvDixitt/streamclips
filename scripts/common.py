@@ -5,6 +5,7 @@ printing them, and gives small JSON / path / time helpers.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import json
 import os
@@ -12,16 +13,22 @@ import re
 import shutil
 import subprocess
 import sys
+from fractions import Fraction
 from pathlib import Path
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
 FONTS_DIR = SKILL_DIR / "fonts"
+IS_WIN = sys.platform.startswith("win")
 
 KEYS = {
-    "GROQ_API_KEY": "Groq (transcription + LLM helpers). Free at https://console.groq.com",
-    "YOUTUBE_API_KEY": "YouTube Data API v3 (stream discovery + live chat). Free at https://console.cloud.google.com",
-    "ELEVENLABS_API_KEY": "ElevenLabs (optional, voiceover only). https://elevenlabs.io",
+    "GROQ_API_KEY": "Groq Whisper transcription (free tier). https://console.groq.com",
+    "YOUTUBE_API_KEY": "YouTube Data API v3: stream discovery + live chat (free). https://console.cloud.google.com",
+    "ELEVENLABS_API_KEY": "ElevenLabs (optional, paid): voiceover or Scribe transcription when a campaign asks for it. https://elevenlabs.io",
 }
+OPTIONAL_KEYS = {"ELEVENLABS_API_KEY"}
+# Optional user-local key file for people whose agent does not inherit shell variables (GUI-launched apps).
+# Format: KEY=value per line. Never inside the repo or a campaign folder.
+KEY_FILE = Path(os.environ.get("STREAMCLIPS_KEY_FILE", Path.home() / ".config" / "streamclips" / "env"))
 
 
 class StepError(RuntimeError):
@@ -37,14 +44,32 @@ def out(obj) -> None:
     print(json.dumps(obj, ensure_ascii=False, indent=2))
 
 
+def _key_file_values() -> dict[str, str]:
+    vals: dict[str, str] = {}
+    try:
+        if KEY_FILE.exists():
+            for line in KEY_FILE.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, v = line.split("=", 1)
+                    vals[k.strip()] = v.strip().strip('"').strip("'")
+    except Exception:
+        pass
+    return vals
+
+
 def key(name: str, required: bool = True) -> str | None:
-    val = os.environ.get(name, "").strip()
+    val = os.environ.get(name, "").strip() or _key_file_values().get(name, "")
     if not val and required:
         raise StepError(
-            f"{name} is not set. Ask the user to export it in their shell "
-            f"(never paste it into files). Purpose: {KEYS.get(name, '')}"
+            f"{name} is not set. Ask the user to export it in their shell (or put KEY=value in {KEY_FILE}); "
+            f"never paste it into chat or repo files. Purpose: {KEYS.get(name, '')}"
         )
     return val or None
+
+
+def has_key(name: str) -> bool:
+    return bool(key(name, required=False))
 
 
 # ---------------------------------------------------------------- ffmpeg
@@ -64,8 +89,6 @@ def ffmpeg_bin() -> str:
     if env and Path(env).exists():
         return env
     try:
-        import contextlib
-
         import static_ffmpeg.run as sfr  # type: ignore
 
         with contextlib.redirect_stdout(sys.stderr):  # first-run download messages must not pollute JSON stdout
@@ -93,11 +116,26 @@ def ffprobe_bin() -> str:
     raise StepError("ffprobe not found next to ffmpeg.")
 
 
+def ffpath(path: str | Path) -> str:
+    """Quote a path for use inside an ffmpeg filter option (ass=, fontsdir=). Handles ':' '\\' and apostrophes on all OSes."""
+    s = str(path).replace("\\", "/")
+    s = re.sub(r"([\\:'])", r"\\\1", s)
+    return "'" + s + "'"
+
+
+def ytdlp_base() -> list[str]:
+    """yt-dlp invocation. yt-dlp needs a JS runtime for YouTube; enable node when deno is absent."""
+    cmd = [sys.executable, "-m", "yt_dlp", "--no-warnings"]
+    if not shutil.which("deno") and shutil.which("node"):
+        cmd += ["--js-runtimes", "node"]
+    return cmd
+
+
 def run(cmd: list[str], timeout: int = 1800, check: bool = True) -> subprocess.CompletedProcess:
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if check and r.returncode != 0:
         tail = (r.stderr or r.stdout or "")[-1500:]
-        raise StepError(f"command failed ({cmd[0]} rc={r.returncode}):\n{tail}")
+        raise StepError(f"command failed ({Path(cmd[0]).name} rc={r.returncode}):\n{tail}")
     return r
 
 
@@ -109,6 +147,20 @@ def probe(path: str | Path) -> dict:
 def duration(path: str | Path) -> float:
     info = probe(path)
     return float(info["format"].get("duration") or 0.0)
+
+
+def video_stream(info: dict) -> dict:
+    vs = [s for s in info.get("streams", []) if s.get("codec_type") == "video"]
+    if not vs:
+        raise StepError("file has no video stream")
+    return vs[0]
+
+
+def fps_of(stream: dict) -> float:
+    try:
+        return float(Fraction(stream.get("r_frame_rate") or stream.get("avg_frame_rate") or "0/1"))
+    except (ValueError, ZeroDivisionError):
+        return 0.0
 
 
 def hw_encoder() -> list[str]:
@@ -153,19 +205,24 @@ def write_json(path: str | Path, obj) -> None:
 
 
 def hms(seconds: float) -> str:
-    seconds = max(0.0, float(seconds))
-    h = int(seconds // 3600)
-    m = int(seconds % 3600 // 60)
-    s = seconds % 60
-    return f"{h:d}:{m:02d}:{s:05.2f}"
+    """H:MM:SS.cc (ASS style). Rounds to centiseconds first so 59.999 -> 1:00.00, never 0:60.00."""
+    cs = int(round(max(0.0, float(seconds)) * 100))
+    h, rem = divmod(cs, 360000)
+    m, rem = divmod(rem, 6000)
+    s, c = divmod(rem, 100)
+    return f"{h:d}:{m:02d}:{s:02d}.{c:02d}"
 
 
-def parse_time(text: str) -> float:
+def parse_time(text: str | float | int) -> float:
     """'1:23:45', '83:45', '5025', '5025.5' -> seconds."""
+    if isinstance(text, (int, float)):
+        return float(text)
     text = str(text).strip()
     if re.fullmatch(r"\d+(\.\d+)?", text):
         return float(text)
     parts = [float(p) for p in text.split(":")]
+    if len(parts) > 3 or any(p < 0 for p in parts):
+        raise StepError(f"bad time: {text}")
     while len(parts) < 3:
         parts.insert(0, 0.0)
     h, m, s = parts
@@ -189,7 +246,7 @@ def dump_yaml(path: str | Path, obj: dict) -> None:
 
 def find_campaign(start: str | Path | None = None) -> Path:
     """Walk up from `start` (or cwd) until a campaign.yaml is found."""
-    p = Path(start or os.getcwd()).resolve()
+    p = Path(start or os.getcwd()).expanduser().resolve()
     for cand in [p, *p.parents]:
         if (cand / "campaign.yaml").exists():
             return cand
@@ -197,10 +254,18 @@ def find_campaign(start: str | Path | None = None) -> Path:
 
 
 def main_guard(fn):
-    """Wrap a script's main(): turn StepError into a clean JSON error."""
+    """Wrap a script's main(): every failure becomes one JSON error line, never a traceback."""
     try:
         fn()
     except StepError as e:
         die(str(e))
+    except SystemExit:
+        raise
     except KeyboardInterrupt:
         die("interrupted", 130)
+    except subprocess.TimeoutExpired as e:
+        die(f"timeout after {e.timeout}s: {Path(str(e.cmd[0])).name if isinstance(e.cmd, list) else e.cmd}")
+    except subprocess.CalledProcessError as e:
+        die(f"command failed rc={e.returncode}: {(e.stderr or '')[-800:] if isinstance(e.stderr, str) else ''}")
+    except Exception as e:  # noqa: BLE001
+        die(f"{type(e).__name__}: {e}")

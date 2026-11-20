@@ -6,8 +6,8 @@ description: Turn a streamer's live streams and replays into campaign-compliant 
 # streamclips
 
 You are the editor-in-chief. The scripts in `scripts/` are your hands. Every script prints JSON, exits non-zero on failure,
-and never prints secrets. Run them with the skill's Python: `python <skill>/scripts/<name>.py ...`
-(use the venv created at setup; see `references/setup.md`). All paths below are relative to this skill folder.
+and never prints secrets. Run them with the skill's venv Python: `<skill>/.venv/bin/python <skill>/scripts/<name>.py ...`
+(Windows: `<skill>\.venv\Scripts\python`). See `references/setup.md`. Paths below are relative to this skill folder.
 
 ## When a user talks to you
 
@@ -41,8 +41,9 @@ and never prints secrets. Run them with the skill's Python: `python <skill>/scri
 6. **Spec and render.** `render.py spec ... --hook "..."`, adjust `spec.json` (start/end on word boundaries, zoom at the payoff), `render.py build`.
    Build re-transcribes the exact clip window thoroughly (free: denoise + two Whisper passes merged) and writes `transcript.json`.
 7. **Verify the captions yourself.** Read `transcript.json`: compare `text` with `second_pass_text` (disagreements are likely mishearings),
-   fix names, remove game/NPC dialogue that confuses the clip, and look at `gaps_rel` (speech energy without words). Edit `words` in
-   `spec.json`, set `"words_locked": true`, re-build. You cannot hear the audio, so only add words you are certain of from frames/chat.
+   fix names, remove game/NPC dialogue that confuses the clip, and look at `gaps_rel` (speech energy without words). Its `words` are in
+   stream seconds, the same shape as `spec.json` `words`: edit, copy back into `spec.json`, set `"words_locked": true`, re-build.
+   You cannot hear the audio, so only add words you are certain of from frames/chat.
 8. **Review.** `review.py --clip-dir ...` must pass hard checks, and you must look at `frames_safe.jpg` yourself (everything readable inside the
    green box, face visible, overlay clear, hook readable, captions not covering the action, nothing misleading). Never ship a clip you have not looked at.
 9. **Package.** `references/posting.md` for the time/audience, then `package.py --clip-dir ... --post-at ... --audience ...`.

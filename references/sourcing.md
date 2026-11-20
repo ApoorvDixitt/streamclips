@@ -23,8 +23,8 @@ YouTube for measured discovery/live chat, Twitch for replay chat. Chat `t` is se
   if the creator is live, start `watch.py` so today's clips include live moments. Prefer the Twitch replay when both exist (chat replay).
 - **replay_first**: replays only; mention the live stream to the user.
 
-Edge cases: a Twitch VOD of a stream that is **still live** shows as a replay with a growing length; chat replay works for the part already
-streamed. Streams that switch games: filter candidates by what you see in the frame sheets. "Just chatting" intros: the first 10-20 min
+Edge cases: a Twitch VOD of a stream that is **still live** is flagged `still_recording: true` and sorted after finished replays; its chat
+replay works for the part already streamed, so it is a fine source for "what happened earlier today". Streams that switch games: filter candidates by what you see in the frame sheets. "Just chatting" intros: the first 10-20 min
 are usually not clip material unless chat spikes. Multi-hour marathons (10-20 h): work in 1-hour chat windows, newest first.
 
 ## Replay workflow (cheap first)
@@ -36,8 +36,9 @@ fetch.py   --campaign C --url ... --start 2:10:00 --end 2:40:00                 
 signals.py --campaign C --source sources/twitch-ID --segment 007800-009600.mp4   # audio + transcript + frames for that window
 ```
 
-Fetch at 1080p when offered (`--quality` default prefers 1080p60); 720p face crops look soft. A 10-min 720p window is ~35 MB and
-takes ~1 min; 1080p60 ~2-3x. Delete `segments/` of finished sources when disk is tight.
+Fetch at 1080p when offered (Twitch: `--quality` default prefers 1080p60; YouTube: best <= 1080p); 720p face crops look soft. A 10-min
+720p Twitch window is ~35 MB and takes ~1 min; YouTube sections cut on keyframes (a few seconds early, harmless) without re-encoding.
+Delete `segments/` of finished sources when disk is tight. `fetch.py` refuses live channel URLs: use `watch.py` for those.
 
 ## Live workflow
 
@@ -49,9 +50,13 @@ signals.py --campaign C --source sources/<id> --segment ...  # then the normal s
 watch.py stop   --campaign C
 ```
 
-`watch.py` is detached (survives the agent session), restarts streamlink on drops, prunes the buffer to `--keep-minutes`,
-and rescans the last 10 minutes of chat every 60 s into `hot.json`. Keep 2-3 minutes behind live so the reaction has finished.
-If the YouTube API quota is exhausted, `chat.py live` falls back to yt-dlp automatically (t becomes relative to collector start; `chat_meta.json` says which).
+`watch.py` is detached (survives the agent session; macOS/Linux and Windows), restarts streamlink on drops, prunes the buffer to
+`--keep-minutes`, and rescans the last 10 minutes of chat every 60 s into `hot.json`. Segments are named by wall-clock second, and
+`status.json` has `capture_offset_s` and `buffer_stream_t`, so `watch.py clip --start/--end` take **stream seconds**, the same clock as
+chat `t` and `hot.json`. Keep 2-3 minutes behind live so the reaction has finished (the newest segment is still being written and is skipped).
+With `--chat-url` (Twitch chat while recording YouTube) the chat is mirrored into the video's `sources/<id>/chat.jsonl` so `signals.py` finds it.
+If the YouTube API quota is exhausted, `chat.py live` raises and `watch.py` restarts it; run it with `--collector yt-dlp` for a zero-quota
+fallback (then chat `t` is relative to collector start and `chat_meta.json` says so; convert with `t + (collector_start_epoch - t0_epoch) + capture_offset_s`).
 
 ## Quota and rate budget per day (free tiers)
 

@@ -45,7 +45,7 @@ def render(folder: Path) -> str:
     for day in sorted((p for p in folder.iterdir() if p.is_dir() and p.name[:4].isdigit()), reverse=True):
         for c in sorted(p for p in day.iterdir() if p.is_dir()):
             spec, rev, meta = read_json(c / "spec.json", {}), read_json(c / "review.json", {}), read_json(c / "metadata.json", {})
-            rel = c.relative_to(folder)
+            rel = c.relative_to(folder).as_posix()
             status = meta.get("status") or ("reviewed " + ("ok" if rev.get("ok") else "FAIL") if rev else "rendered" if (c / "clip.mp4").exists() else "spec")
             cls = "ok" if rev.get("ok") else "bad" if rev else ""
             img = f'<a href="/{rel}/clip.mp4"><img src="/{rel}/thumb.jpg"></a>' if (c / "thumb.jpg").exists() else ""

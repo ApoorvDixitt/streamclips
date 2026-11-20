@@ -25,7 +25,7 @@ def main() -> None:
     rows = list(csv.DictReader(open(folder / "index.csv", encoding="utf-8")))
     scored = []
     for r in rows:
-        views = sum(int(float(r.get(k) or 0)) for k in ("views_tiktok", "views_reels", "views_shorts"))
+        views = sum(int(float(r.get(k) or 0)) for k in ("views_tiktok", "views_reels", "views_shorts", "views_x"))
         if views <= 0:
             continue
         try:
