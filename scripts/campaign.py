@@ -120,9 +120,9 @@ def _coerce(v: str):
 def campaigns_root(location: str | Path) -> Path:
     """<user's preferred location>/streamclips/ holds every campaign. Refuses to use the skill repo itself."""
     loc = Path(location).expanduser().resolve()
-    root = loc if loc.name == "streamclips" and not (loc / "SKILL.md").exists() else loc / "streamclips"
-    if (root / "SKILL.md").exists():
-        raise StepError(f"{root} is the skill repo, not a campaigns folder. Ask the user for a different location (e.g. ~/Videos).")
+    if (loc / "SKILL.md").exists() or any((p / "SKILL.md").exists() for p in loc.parents):
+        raise StepError(f"{loc} is inside the skill repo, not a place for campaigns. Ask the user for a different location (e.g. ~/Videos).")
+    root = loc if loc.name == "streamclips" else loc / "streamclips"
     root.mkdir(parents=True, exist_ok=True)
     readme = root / "README.md"
     if not readme.exists():
