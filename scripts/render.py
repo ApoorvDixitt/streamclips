@@ -23,8 +23,12 @@ FPS = 30
 FONT = "Anton"
 PROFANITY = re.compile(r"^(shit\w*|fuck\w*|bitch\w*|ass(hole)?s?|dick\w*|pussy|cunt\w*|nigg\w*|fag\w*|motherf\w*|bastard\w*|whore\w*|slut\w*|cocks?|tits|retard\w*|goddamn)$", re.I)
 FILLER_HOOK = re.compile(r"^(did you know|in this video|hey guys|wait for it|you won'?t believe)", re.I)
-# vertical zones on the 1920 canvas (see references/render.md)
-ZONE = {"overlay_y": 225, "face_top": 350, "face_h": 370, "game_top": 740, "game_h": 880, "caption_margin_v": 420, "hook_y": 830}
+# Universal safe zone (inside TikTok / Reels / Shorts UI): x 60..930, y 230..1420 on the 1080x1920 canvas.
+# Measured guidance: TikTok caption block ~bottom 22 %, like/share column ~right 14 %, top tabs ~10-12 %.
+SAFE = {"left": 60, "right": 150, "top": 230, "bottom": 500}
+# vertical zones (see references/render.md). Readable things (overlay, face, hook, captions) stay inside SAFE.
+ZONE = {"overlay_y": 305, "face_top": 390, "face_h": 330, "game_top": 740, "game_h": 820, "caption_margin_v": 540, "hook_y": 800}
+TEXT_ML, TEXT_MR = SAFE["left"] + 10, SAFE["right"] + 10  # ASS margins so text never enters the right UI column
 
 
 def mask_word(w: str) -> str:
@@ -39,7 +43,7 @@ def ass_time(t: float) -> str:
     return hms(t)
 
 
-def wrap_hook(text: str, max_width_px: int = 940) -> tuple[list[str], int]:
+def wrap_hook(text: str, max_width_px: int = W - TEXT_ML - TEXT_MR - 40) -> tuple[list[str], int]:
     """Pick a font size (84..58) and wrap to <=2 lines. Anton averages ~0.5 em per char."""
     text = " ".join(text.split())
     for size in (84, 76, 68, 62, 58):
@@ -83,7 +87,7 @@ def build_ass(words: list[dict], clip_start: float, clip_len: float, hook: str |
     hook_style = ""
     if hook:
         lines, size = wrap_hook(hook)
-        hook_style = f"Style: Hook,{FONT},{size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HC8000000,0,0,0,0,100,100,0,0,3,16,0,8,60,60,{H - ZONE['hook_y'] - size},1\n"
+        hook_style = f"Style: Hook,{FONT},{size},&H00FFFFFF,&H00FFFFFF,&H00000000,&HC8000000,0,0,0,0,100,100,0,0,3,16,0,8,{TEXT_ML},{TEXT_MR},{ZONE['hook_y']},1\n"
         txt = "\\N".join(l.upper() for l in lines)
         ev.append(f"Dialogue: 1,{ass_time(0)},{ass_time(min(hook_seconds, clip_len))},Hook,,0,0,0,,{{\\fad(120,160)\\t(0,160,\\fscx106\\fscy106)}}{txt}")
     return f"""[Script Info]
@@ -94,7 +98,7 @@ WrapStyle: 2
 ScaledBorderAndShadow: yes
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,{FONT},88,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,1,0,1,9,3,2,50,50,{ZONE['caption_margin_v']},1
+Style: Cap,{FONT},84,&H00FFFFFF,&H00FFFFFF,&H00000000,&H80000000,0,0,0,0,100,100,1,0,1,9,3,2,{TEXT_ML},{TEXT_MR},{ZONE['caption_margin_v']},1
 {hook_style}[Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """ + "\n".join(ev) + "\n"
@@ -190,6 +194,10 @@ def build_filter(spec: dict, src_w: int, src_h: int, ass_path: Path, overlay_png
     return ";".join(f + chain), inputs
 
 
+def out_dir_for(spec_path: Path) -> Path:
+    return spec_path.parent
+
+
 def cmd_spec(a) -> None:
     campaign = find_campaign(a.campaign)
     cfg = load_yaml(campaign / "campaign.yaml")
@@ -220,7 +228,8 @@ def cmd_spec(a) -> None:
         "audio_mode": "voiceover" if a.voiceover else "original",
         "voiceover": {"text": a.voiceover, "at": 0.0, "voice_id": cfg["audio"].get("voice_id")} if a.voiceover else None,
         "overlay": {**cfg["overlay"], "file": str(campaign / cfg["overlay"]["file"]) if cfg["overlay"].get("file") else None},
-        "words": words, "out": str(out_dir / "clip.mp4"),
+        "words": words, "words_locked": False, "creator_name": cfg.get("creator", {}).get("name", ""), "names": list(clip.get("names", []) or []),
+        "language": clip.get("language", "en"), "out": str(out_dir / "clip.mp4"),
     }
     if spec["audio_mode"] == "voiceover" and cfg["audio"].get("mode") != "voiceover_allowed":
         raise StepError("campaign audio.mode is 'original': voiceover not allowed for this campaign")
@@ -245,12 +254,18 @@ def cmd_build(a) -> None:
     if local_start < 0 or local_start + clip_len > duration(src) + 0.5:
         raise StepError("clip range falls outside the fetched segment; fetch a wider range")
     words = spec.get("words") or []
-    if spec.get("captions", "word_pop") != "none" and not words:
+    if spec.get("captions", "word_pop") != "none" and not spec.get("words_locked"):
+        # Final captions always get the thorough free pass on the exact clip window (denoise + 2 Whisper passes merged).
         from transcribe import transcribe_window
 
-        tr = transcribe_window(str(src), local_start, local_start + clip_len)
-        words = [{**w, "start": w["start"] + spec["start_t"], "end": w["end"] + spec["start_t"]} for w in tr["words"]]
+        names = [n for n in ([spec.get("creator_name", "")] + list(spec.get("names") or [])) if n]
+        tr = transcribe_window(str(src), local_start, local_start + clip_len, spec.get("language") or "en", "final", names)
+        words = [{**w, "start": round(w["start"] + spec["start_t"], 2), "end": round(w["end"] + spec["start_t"], 2)} for w in tr["words"]]
         spec["words"] = words
+        spec["transcript"] = {"engine": tr["engine"], "text": tr["text"], "second_pass_text": tr.get("second_pass_text", ""),
+                              "gaps_rel": tr.get("gaps", []), "merged_from_second_pass": tr.get("merged_from_second_pass", 0)}
+        write_json(out_dir_for(spec_path) / "transcript.json", {**tr, "clip_start_t": spec["start_t"],
+                   "how_to_fix": "Edit spec.json 'words' (text/start/end, times are stream seconds), set \"words_locked\": true, re-run render.py build."})
     bleeps = []
     if spec.get("bleep_profanity", True):
         for w in words:
@@ -277,7 +292,13 @@ def cmd_build(a) -> None:
     run(cmd, timeout=1800)
     spec["rendered"] = {"file": str(out_path), "duration_s": round(duration(out_path), 2), "bleeps": bleeps, "words_used": len(words)}
     write_json(spec_path, spec)
-    out({"ok": True, **spec["rendered"], "captions_ass": str(ass_path), "next": "review.py --clip-dir " + str(out_dir)})
+    gaps = (spec.get("transcript") or {}).get("gaps_rel", [])
+    out({"ok": True, **spec["rendered"], "captions_ass": str(ass_path), "transcript_engine": (spec.get("transcript") or {}).get("engine"),
+         "caption_gaps_s": gaps,
+         "agent_check": "Read transcript.json: compare text vs second_pass_text (disagreements = likely mishearings), fix misheard words (names), "
+                        "remove NPC/game-dialogue lines if they confuse the clip, add words for real speech inside caption_gaps_s only when frames/chat make "
+                        "them certain. Edit spec.json words, set words_locked true, re-build.",
+         "next": "review.py --clip-dir " + str(out_dir)})
 
 
 def main() -> None:

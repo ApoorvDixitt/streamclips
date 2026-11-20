@@ -1,0 +1,77 @@
+name: Should Fail
+slug: should-fail
+listing: ''
+created: '2026-11-21'
+creator:
+  name: Should
+  youtube_channel_id: ''
+  youtube_handle: ''
+  twitch_login: ''
+  kick_slug: ''
+  extra_sources: []
+game: ''
+source_priority: auto
+replay_max_age_days: 2
+platforms:
+- tiktok
+- instagram_reels
+- youtube_shorts
+payout:
+  cpm_usd: 1.0
+  min_payout_usd: 5.0
+  max_payout_usd: 300.0
+  min_engagement_rate: 0.008
+clip:
+  min_seconds: 8
+  max_seconds: 59
+  target_seconds:
+  - 15
+  - 35
+  hook_seconds: 2
+  layout: face-top
+  facecam_region: null
+  captions: word_pop
+  mask_profanity: true
+  bleep_profanity: true
+  zoom_at_peak: true
+  names: []
+  language: en
+audio:
+  mode: original
+  voice_id: q0IMILNRPxOgtBTS4taI
+  voice_name: Drew
+  voiceover_max_words: 12
+overlay:
+  file: ''
+  required: false
+  position: top
+  width_pct: 0.72
+  y_pct: 0.159
+caption:
+  required_text: ''
+  hashtags: []
+  no_links: true
+  template: '{hook}
+
+
+    {required_text} {hashtags}'
+rules:
+  max_posts_per_clip: 5
+  submit_within_minutes: 30
+  keep_public_days: 30
+  likes_visible: true
+  tier1_min_share: 0.4
+  banned: []
+  preferred_moments: []
+  notes: []
+audience:
+  tier1:
+  - US
+  - UK
+  - CA
+  - AU
+  posting_windows_et:
+  - 11:00-14:00
+  - 17:00-21:00
+user_timezone: Asia/Kolkata
+brief_text_file: ''

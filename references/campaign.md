@@ -1,9 +1,9 @@
 # Campaign folder and campaign.yaml
 
-One folder per campaign, at a location the user chooses. Everything about the campaign lives inside it.
+One folder per campaign inside `<user's chosen location>/streamclips/`. Everything about the campaign lives inside it.
 
 ```
-<root>/<campaign-slug>/
+<location>/streamclips/<campaign-slug>/
   campaign.yaml          rules the scripts enforce + defaults the agent follows
   brief/                 original brief text, overlay PNG, any reference files
   MEMORY.md              durable notes (streamer facts, layout quirks, what got approved/rejected, decisions)
@@ -19,7 +19,7 @@ One folder per campaign, at a location the user chooses. Everything about the ca
 ## Create
 
 ```bash
-python scripts/campaign.py new --root ~/Clips --name "KreekCraft GTA 6 Clipping" --creator KreekCraft \
+python scripts/campaign.py new --root ~/Videos --name "KreekCraft GTA 6 Clipping" --creator KreekCraft \
   --brief brief.txt --overlay overlay.png --youtube @Kreek --twitch kreekcraft --game "Grand Theft Auto VI"
 ```
 
@@ -41,10 +41,11 @@ Then map the brief into `campaign.yaml` with `campaign.py set key=value ...` (va
 | `clip.layout` | `face-top` when the streamer has a facecam, `fill` when there is none, `fit` for talk/IRL. |
 | `clip.facecam_region` | fractions of the source frame `{x,y,w,h}`. Calibrate from a frame sheet (render.md). `null` disables the face panel. |
 | `clip.captions` | `word_pop` (default), `phrase`, `none`. |
+| `clip.names` / `clip.language` | vocabulary hint for transcription (characters, places, catchphrases; the creator's name is added automatically) and the spoken language. Names-only prompts improve Whisper; descriptive prompts make it hallucinate, so keep it to names. |
 | `clip.mask_profanity` / `bleep_profanity` | brief says "banned words" -> keep both true. |
 | `audio.mode` | `original` unless the brief allows added narration. `voiceover_allowed` enables `render.py spec --voiceover`. |
 | `audio.voice_id` | ElevenLabs voice (Drew `q0IMILNRPxOgtBTS4taI` by default). |
-| `overlay.*` | `required: true` makes review fail if the logo is covered. `width_pct`, `y_pct`, `position` place it in the safe top band. |
+| `overlay.*` | `required: true` makes review fail if the logo is covered. Defaults (`width_pct` 0.72, `y_pct` 0.159) keep it inside the platform-UI safe zone; review fails if you move it outside. |
 | `caption.required_text` / `hashtags` / `no_links` / `template` | copied **exactly** into every post text; rewording gets clips rejected. |
 | `rules.max_posts_per_clip`, `submit_within_minutes`, `keep_public_days`, `likes_visible`, `tier1_min_share` | go into `checklist.md`. |
 | `rules.banned` / `preferred_moments` | your selection guide; `rules.banned_words` (optional list) also feeds `hook_check.py`. |

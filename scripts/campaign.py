@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Create and manage a campaign folder.
 
-  campaign.py new  --root ~/Clips --name "KreekCraft GTA 6" [--brief brief.txt] [--overlay logo.png]
+  campaign.py new  --root ~/Videos --name "KreekCraft GTA 6" [--brief brief.txt] [--overlay logo.png]   -> ~/Videos/streamclips/<slug>/
                    [--youtube @Kreek] [--twitch kreekcraft] [--game "Grand Theft Auto VI"]
   campaign.py set  --campaign <dir> clip.max_seconds=45 audio.mode=original caption.hashtags='["#A","#B"]'
   campaign.py show --campaign <dir>
@@ -42,9 +42,11 @@ DEFAULTS = {
         "mask_profanity": True,
         "bleep_profanity": True,
         "zoom_at_peak": True,
+        "names": [],  # vocabulary for transcription: characters, places, catchphrases (creator name is added automatically)
+        "language": "en",
     },
     "audio": {"mode": "original", "voice_id": "q0IMILNRPxOgtBTS4taI", "voice_name": "Drew", "voiceover_max_words": 12},
-    "overlay": {"file": "", "required": False, "position": "top", "width_pct": 0.78, "y_pct": 0.12},
+    "overlay": {"file": "", "required": False, "position": "top", "width_pct": 0.72, "y_pct": 0.159},
     "caption": {
         "required_text": "",
         "hashtags": [],
@@ -115,8 +117,22 @@ def _coerce(v: str):
         return s
 
 
+def campaigns_root(location: str | Path) -> Path:
+    """<user's preferred location>/streamclips/ holds every campaign. Refuses to use the skill repo itself."""
+    loc = Path(location).expanduser().resolve()
+    root = loc if loc.name == "streamclips" and not (loc / "SKILL.md").exists() else loc / "streamclips"
+    if (root / "SKILL.md").exists():
+        raise StepError(f"{root} is the skill repo, not a campaigns folder. Ask the user for a different location (e.g. ~/Videos).")
+    root.mkdir(parents=True, exist_ok=True)
+    readme = root / "README.md"
+    if not readme.exists():
+        readme.write_text("# streamclips campaigns\n\nOne folder per campaign. Open a campaign folder, then a date folder, then a clip folder; "
+                          "each clip folder has a README.md that tells you exactly what to post and how.\n", encoding="utf-8")
+    return root
+
+
 def cmd_new(a) -> None:
-    root = Path(a.root).expanduser().resolve()
+    root = campaigns_root(a.root)
     sl = a.slug or slug(a.name)
     folder = root / sl
     if folder.exists() and (folder / "campaign.yaml").exists():
@@ -236,7 +252,7 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
     n = sub.add_parser("new")
-    n.add_argument("--root", required=True)
+    n.add_argument("--root", required=True, help="user's preferred location; campaigns go in <root>/streamclips/<slug>")
     n.add_argument("--name", required=True)
     n.add_argument("--slug")
     n.add_argument("--creator")

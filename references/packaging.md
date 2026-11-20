@@ -2,16 +2,19 @@
 
 ## Per clip folder `YYYY-MM-DD/NN-<slug>/`
 
+The user opens `README.md` first; it says what the clip is and what to do, in plain words. Then one `post_<platform>.md` per platform
+with numbered steps and the exact caption in a copy box. No `.txt` files.
+
 | File | Purpose |
 |---|---|
-| `clip.mp4` | the deliverable (1080x1920) |
-| `thumb.jpg` | frame at 1.0 s with the hook on screen (cover image) |
-| `captions.srt` | for platforms that accept uploaded subtitles / accessibility |
-| `captions.ass` | the burned caption script (debug) |
-| `post_tiktok.txt`, `post_instagram_reels.txt`, `post_youtube_shorts.txt` | paste-ready text per platform (required text + exact hashtags) |
-| `checklist.md` | pre-post checklist from the campaign rules + posting time + submission deadline |
-| `spec.json`, `review.json`, `frames.jpg` | how it was made and proven |
-| `metadata.json` | machine-readable summary (status, post_at, audience, post_count) |
+| `README.md` | what this clip is, what to do, what every file is, caption notes (possible uncaptioned speech) |
+| `post_tiktok.md`, `post_instagram_reels.md`, `post_youtube_shorts.md` | when to post, audience, numbered upload steps, caption to copy, the campaign rules for that post, submission deadline |
+| `clip.mp4` | the deliverable (1080x1920, 30 fps, -14 LUFS) |
+| `thumb.jpg` | cover image (frame at 1 s with the hook) |
+| `captions.srt` | optional subtitle upload |
+| `transcript.json` | final transcription (engine, text, second-pass text, gaps) so the agent can verify captions |
+| `frames.jpg`, `frames_safe.jpg` | six frames; the green box = area no platform UI covers |
+| `spec.json`, `captions.ass`, `review.json`, `metadata.json` | build inputs and proofs (for the agent) |
 
 Numbering: `campaign.py day` returns `next_index`; name folders `01-<slug>`, `02-<slug>` in creation order.
 

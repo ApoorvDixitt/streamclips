@@ -242,8 +242,10 @@ def main() -> None:
             if not a.no_transcribe:
                 from transcribe import transcribe_window
 
+                names = [cfg.get("creator", {}).get("name", "")] + list((cfg.get("clip", {}) or {}).get("names", []) or [])
                 try:
-                    tr = transcribe_window(str(seg_path), max(0.0, start - offset), min(seg_dur, end - offset + 4), None if a.language == "auto" else a.language)
+                    tr = transcribe_window(str(seg_path), max(0.0, start - offset), min(seg_dur, end - offset + 4),
+                                           None if a.language == "auto" else a.language, "scan", [n for n in names if n])
                     c["transcript"] = tr["text"]
                     c["words"] = [{**w, "start": round(w["start"] + start, 2), "end": round(w["end"] + start, 2)} for w in tr["words"]]
                     c["transcript_engine"] = tr["engine"]

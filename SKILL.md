@@ -14,7 +14,7 @@ and never prints secrets. Run them with the skill's Python: `python <skill>/scri
 | User says | Do |
 |---|---|
 | "install / set up streamclips" | `references/setup.md`. Run `doctor.py`, ask for missing keys, re-run until `ok: true`. |
-| "new campaign", pastes a brief | `references/campaign.md`. `campaign.py new ...`, fill `campaign.yaml` from the brief, `campaign.py validate`. Ask where the campaign folder should live. |
+| "new campaign", pastes a brief | `references/campaign.md`. Ask once where the user wants their clips (any folder, e.g. `~/Videos`); campaigns live in `<that folder>/streamclips/<campaign>/`. `campaign.py new --root <folder> ...`, fill `campaign.yaml` from the brief, `campaign.py validate`. |
 | "start clipping <creator/campaign>", "clips for today" | The daily loop below. |
 | "is anything happening live?" | `discover.py` -> if live, `watch.py start`, then poll `watch.py status`; hot moments -> `watch.py clip` -> signals -> clip. |
 | "post plan", "when do I post" | `references/posting.md`: research, then `package.py --post-at ... --audience ...`. |
@@ -39,10 +39,15 @@ and never prints secrets. Run them with the skill's Python: `python <skill>/scri
 5. **Hook and copy.** `references/hooks.md`. Write 3 hooks per clip from the transcript and frames only. Optional trend layer: a quick
    web search for the moment's subject; use it only if the transcript/frames support it. `hook_check.py` must pass.
 6. **Spec and render.** `render.py spec ... --hook "..."`, adjust `spec.json` (start/end on word boundaries, zoom at the payoff), `render.py build`.
-7. **Review.** `review.py --clip-dir ...` must pass hard checks, and you must look at `frames.jpg` yourself (face visible, overlay clear,
-   hook readable, captions not covering the action, nothing misleading). Re-render if needed. Never ship a clip you have not looked at.
-8. **Package.** `references/posting.md` for the time/audience, then `package.py --clip-dir ... --post-at ... --audience ...`.
-9. **Record.** Fill today's `README.md` (plan, clips table, posting plan, lessons) and add anything durable to `MEMORY.md`
+   Build re-transcribes the exact clip window thoroughly (free: denoise + two Whisper passes merged) and writes `transcript.json`.
+7. **Verify the captions yourself.** Read `transcript.json`: compare `text` with `second_pass_text` (disagreements are likely mishearings),
+   fix names, remove game/NPC dialogue that confuses the clip, and look at `gaps_rel` (speech energy without words). Edit `words` in
+   `spec.json`, set `"words_locked": true`, re-build. You cannot hear the audio, so only add words you are certain of from frames/chat.
+8. **Review.** `review.py --clip-dir ...` must pass hard checks, and you must look at `frames_safe.jpg` yourself (everything readable inside the
+   green box, face visible, overlay clear, hook readable, captions not covering the action, nothing misleading). Never ship a clip you have not looked at.
+9. **Package.** `references/posting.md` for the time/audience, then `package.py --clip-dir ... --post-at ... --audience ...`.
+   The user opens the clip folder's `README.md` and the `post_<platform>.md` files; they contain every instruction and the exact caption.
+10. **Record.** Fill today's `README.md` (plan, clips table, posting plan, lessons) and add anything durable to `MEMORY.md`
    (facecam position, streamer habits, what the campaign reviewer rejected). Stop the watcher when done or leave it running if the user wants.
 
 Parallel work: one source per sub-agent is fine (each writes to its own `sources/<platform>-<id>/`). Only one `watch.py` per stream.
@@ -57,7 +62,9 @@ Parallel work: one source per sub-agent is fine (each writes to its own `sources
 - Overlay required -> it stays fully visible first frame to last. `review.py` checks pixels; you check the frame sheet.
 - Keys live in the user's environment only. Never write them into files, logs or chat. If a key is missing, ask the user to export it.
 - Do not post, log in, or run multiple accounts for the user. Posting is manual; you prepare the pack and the plan.
-- Stay inside free/cheap tiers: Groq ~8 audio-hours/day (transcribe candidate windows, not whole streams); YouTube API 10k units/day
+- Free first. Everything works with the two free keys (Groq, YouTube). Paid engines (ElevenLabs Scribe/voice isolation/voiceover) are opt-in
+  per campaign and never used automatically; prefer re-checking with the free tools and your own judgment over spending credits.
+- Stay inside free tiers: Groq ~8 audio-hours/day (transcribe candidate windows, not whole streams); YouTube API 10k units/day
   (live chat polling every 30 s ~ 600 units/hour).
 
 ## Script map
@@ -71,12 +78,12 @@ Parallel work: one source per sub-agent is fine (each writes to its own `sources
 | `fetch.py` | download a time range -> `segments/*.mp4` | sourcing.md |
 | `watch.py` | live buffer + chat + hot moments; `clip` cuts from buffer | sourcing.md |
 | `signals.py` | chat/audio/speech scoring -> `candidates.json`, frame sheets | selection.md |
-| `transcribe.py` | Groq Whisper (mlx fallback), cleaned word timestamps | selection.md |
+| `transcribe.py` | scan (fast) / final (denoise + 2 passes + gap report); Groq free, mlx offline, Scribe opt-in | selection.md, render.md |
 | `hook_check.py` | hook rules + transcript support | hooks.md |
 | `render.py` | spec -> 1080x1920 clip | render.md |
 | `voiceover.py` | ElevenLabs with cache (Drew by default) | render.md |
-| `review.py` | hard/soft QA + frame sheet | review.md |
-| `package.py` | thumb, SRT, post texts, checklist, index.csv, day README | packaging.md, posting.md |
+| `review.py` | hard/soft QA, safe-zone check, frame sheets (`frames_safe.jpg` draws the UI-free box) | review.md |
+| `package.py` | clip README.md + post_<platform>.md (instructions + caption), thumb, SRT, index.csv, day README | packaging.md, posting.md |
 | `learn.py` | views -> what worked -> weight suggestions | packaging.md |
 | `dashboard.py` | local read-only progress page | packaging.md |
 

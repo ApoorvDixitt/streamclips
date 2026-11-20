@@ -11,7 +11,7 @@
 | `promo: true` | like/subscribe/giveaway talk; score halved. Almost never a clip. |
 | `peak_t`, `start_t`, `end_t` | stream seconds; start = peak - 8, end = peak + 14 by default |
 | `chat_sample`, `chat_label` | what chat said and why (laugh, shock, hype) |
-| `transcript`, `words` | Groq Whisper text and word times for the window |
+| `transcript`, `words` | fast scan transcription (Groq turbo). Good enough to judge the moment; the final clip gets a thorough pass at build time |
 | `frames` | 2x2 sheet at peak -6/-2/+1/+5 s. **Look at it.** |
 | `agent` | your notes/decisions; preserved when signals re-runs |
 

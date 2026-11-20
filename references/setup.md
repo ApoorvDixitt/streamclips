@@ -43,7 +43,7 @@ Always run scripts with the venv Python: `.venv/bin/python scripts/<name>.py` (W
 > I need three keys set in your shell environment (not pasted here):
 > - `GROQ_API_KEY` (free, console.groq.com) for transcription.
 > - `YOUTUBE_API_KEY` (free, Google Cloud -> enable "YouTube Data API v3" -> credentials -> API key) for stream discovery and live chat.
-> - `ELEVENLABS_API_KEY` only if you want voiceovers.
+> - `ELEVENLABS_API_KEY` is optional and paid: only if you want voiceovers or opt into Scribe transcription. Everything works without it.
 > Add them to `~/.zshrc` / `~/.bashrc` (`export GROQ_API_KEY="..."`) or Windows env vars, open a new terminal, and tell me "keys set".
 
 Then re-run `doctor.py`. If the user pastes a key into chat anyway, ask them to rotate it afterwards and still put it in the environment.
@@ -51,12 +51,31 @@ The agent's own process must have the variables: if the agent was started before
 
 Optional: `FFMPEG_BIN`, `STREAMCLIPS_GROQ_STT` (default `whisper-large-v3-turbo`), `STREAMCLIPS_MLX_MODEL`.
 
-## 4. First campaign
+## 4. Where clips live (ask once)
 
-Ask the user for: the campaign brief (text or screenshot), the overlay file if any, the creator's YouTube handle / Twitch login,
-and **where the campaign folder should live** (any folder they choose, e.g. `~/Clips`). Then `references/campaign.md`.
+Ask: "Where should your clips live? I will create a `streamclips` folder there." Any folder works (e.g. `~/Videos`, `D:\Clips`).
+`campaign.py new --root <that folder>` creates `<folder>/streamclips/` with a short README, and one sub-folder per campaign:
 
-## 5. Verify end to end
+```
+<folder>/streamclips/
+  README.md
+  kreekcraft-gta6/          one campaign (campaign.yaml, brief/, MEMORY.md, index.csv, sources/, live/)
+    2026-11-21/             one day
+      README.md             the day's plan, clips table, posting plan
+      01-left-jason-behind/ one clip: clip.mp4, README.md (what to do), post_tiktok.md, post_instagram_reels.md, post_youtube_shorts.md, ...
+      02-.../
+  another-campaign/
+```
+
+Never put campaigns inside the skill repo (`campaign.py` refuses). Remember the location in the campaign's `MEMORY.md` and in your
+own project notes so the next session finds it.
+
+## 5. First campaign
+
+Ask the user for: the campaign brief (text or screenshot), the overlay file if any, the creator's YouTube handle / Twitch login
+(check the brief's links: creators often stream on a secondary channel). Then `references/campaign.md`.
+
+## 6. Verify end to end
 
 Pick a recent replay from `discover.py`, run chat -> signals (chat-only) -> fetch one 10-minute window -> signals --segment ->
 render one clip -> review -> package. Show the user the `frames.jpg` and the clip path. This is the acceptance test.

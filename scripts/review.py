@@ -73,12 +73,18 @@ def overlay_visible(frame: np.ndarray, ref) -> float:
     return float((diff < 60).mean())  # share of opaque overlay pixels that match
 
 
-def frame_sheet(path: Path, times: list[float], dst: Path) -> None:
+def frame_sheet(path: Path, times: list[float], dst: Path, safe: dict | None = None) -> None:
+    """Frames side by side; with `safe`, draws the platform-UI safe box (green) so the eye can check nothing readable is outside it."""
     cmd = [ffmpeg_bin(), "-y", "-hide_banner", "-loglevel", "error"]
     for t in times:
         cmd += ["-ss", f"{t:.2f}", "-i", str(path)]
     n = len(times)
-    fc = "".join(f"[{i}:v]scale=270:-2,setsar=1[v{i}];" for i in range(n)) + "".join(f"[v{i}]" for i in range(n)) + f"hstack=inputs={n}[o]"
+    box = ""
+    if safe:
+        x, y = safe["left"], safe["top"]
+        w, h = W - safe["left"] - safe["right"], H - safe["top"] - safe["bottom"]
+        box = f"drawbox=x={x}:y={y}:w={w}:h={h}:color=lime@0.9:t=6,"
+    fc = "".join(f"[{i}:v]{box}scale=270:-2,setsar=1[v{i}];" for i in range(n)) + "".join(f"[v{i}]" for i in range(n)) + f"hstack=inputs={n}[o]"
     cmd += ["-filter_complex", fc, "-map", "[o]", "-frames:v", "1", "-q:v", "3", str(dst)]
     subprocess.run(cmd, capture_output=True, timeout=300)
 
@@ -127,12 +133,31 @@ def main() -> None:
     add("profanity_masked", not unmasked or not lim.get("mask_profanity", True), f"unmasked: {unmasked[:3]}" if unmasked else "")
     add("not_raw_recording", spec.get("layout") in ("face-top", "fill", "fit") and bool(spec.get("hook")) and spec.get("captions") != "none",
         "edit = layout + hook + captions (brief bans raw screen recordings)")
+    # safe zone: every readable element must sit inside the box the platform UIs leave free
+    from render import SAFE, ZONE, TEXT_ML, TEXT_MR
+
+    issues = []
+    if ref is not None:
+        _, alpha, ox, oy = ref
+        oh, ow = alpha.shape
+        if ox < SAFE["left"] or ox + ow > W - SAFE["right"] or oy < SAFE["top"] or oy + oh > H - SAFE["bottom"]:
+            issues.append(f"overlay box x{ox}-{ox + ow} y{oy}-{oy + oh}")
+    if spec.get("layout") == "face-top" and spec.get("facecam_region"):
+        if ZONE["face_top"] < SAFE["top"] or ZONE["face_top"] + ZONE["face_h"] > H - SAFE["bottom"]:
+            issues.append("face panel")
+    if ZONE["hook_y"] < SAFE["top"] or H - ZONE["caption_margin_v"] > H - SAFE["bottom"]:
+        issues.append("text zones")
+    if TEXT_ML < SAFE["left"] or TEXT_MR < SAFE["right"]:
+        issues.append("text margins")
+    add("inside_safe_zone", not issues, "outside: " + ", ".join(issues) if issues else f"all readable elements within x{SAFE['left']}-{W - SAFE['right']} y{SAFE['top']}-{H - SAFE['bottom']}")
     frame_sheet(clip, times, cdir / "frames.jpg")
+    frame_sheet(clip, times, cdir / "frames_safe.jpg", SAFE)
     hard_fail = [c for c in checks if not c["pass"] and c["hard"]]
     soft_fail = [c for c in checks if not c["pass"] and not c["hard"]]
     report = {"ok": not hard_fail, "clip": str(clip), "duration_s": round(dur, 2), "checks": checks,
-              "frames": str(cdir / "frames.jpg"),
-              "agent_must": ["look at frames.jpg: face panel shows the streamer, overlay unobstructed, hook readable, captions not covering the action",
+              "frames": str(cdir / "frames.jpg"), "frames_safe": str(cdir / "frames_safe.jpg"),
+              "agent_must": ["look at frames_safe.jpg: everything readable (overlay, face, hook, captions) is inside the green box; face panel shows the streamer; hook readable; captions not covering the action",
+                             "read transcript.json: captions complete? misheard names? fix spec.json words and re-build if needed",
                              "confirm the hook is literally true to the transcript/frames (brief bans fabricated context)",
                              "confirm the moment is entertaining on its own (setup -> payoff -> reaction)"]}
     write_json(cdir / "review.json", report)

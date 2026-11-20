@@ -2,16 +2,20 @@
 
 `render.py spec` -> `spec.json` -> (edit) -> `render.py build` -> `clip.mp4` (1080x1920, 30 fps, H.264 hardware-encoded where available, AAC, -14 LUFS).
 
-## Canvas zones (face-top layout)
+## Safe zone and canvas zones (face-top layout)
+
+Every readable element stays inside the universal safe box **x 60-930, y 230-1420** (what TikTok, Reels and Shorts UIs leave free:
+top tabs, the right like/comment column, the bottom caption/description block). Gameplay and the blurred background may fill the
+whole frame; text, face and overlay may not. `review.py` enforces this and draws the box in `frames_safe.jpg`.
 
 ```
-y 0-120      platform UI safe margin
-y 120-330    overlay band (logo centred at y = overlay.y_pct * 1920, width overlay.width_pct * 1080)
-y 350-720    face panel (facecam crop, white 6 px frame, centred)
-y 740-1620   gameplay (source cropped to 1080:880, lanczos scaled; crop shifted right of the facecam strip + alerts)
-  y ~830     hook box (2 lines max, auto font 84 -> 58)
-  y ~1500    captions (3-word phrases, active word yellow + 12 % scale, 88 px Anton, 9 px outline)
-y 1800-1920  bottom safe margin (TikTok/Shorts UI)
+y 0-230      top UI margin (nothing readable)
+y 240-370    overlay band (logo centred at y 305, width 0.72 * 1080 = 778 px -> x 151..929)
+y 390-720    face panel (330 px high, white 6 px frame, centred)
+y 740-1560   gameplay (source cropped to 1080:820, lanczos; crop shifted right of the facecam strip + alerts)
+  y 800      hook box top (<= 2 lines, auto font 84 -> 58, margins 70 / 160 so it never enters the right column)
+  y ~1300    captions (bottom edge at 1380; 3-word phrases, active word yellow + 12 %, 84 px Anton, 9 px outline)
+y 1420-1920  bottom UI margin (gameplay may continue under it; no text)
 background   blurred, darkened copy of the frame
 ```
 
@@ -27,13 +31,20 @@ background   blurred, darkened copy of the frame
 
 Source quality: the face panel upscales ~2.5x; fetch 1080p60 whenever the platform offers it.
 
-## Captions
+## Captions (free-first, agent-verified)
 
-- `word_pop` (default): phrases of up to 3 words, the spoken word turns yellow and pops; phrases never stack because each phrase
-  ends when the next begins. Profanity masked `s***` when `clip.mask_profanity` and bleeped (1 kHz tone, <= 0.9 s) when `clip.bleep_profanity`.
-- Words come from the candidate (`words` in `candidates.json`); if missing, `build` transcribes the exact clip window.
-- Whisper quirks handled: hallucinated trailing "Thank you.", repeated lines, words stretched over silences (capped at 0.6 s).
-- `phrase` shows whole phrases without the pop; `none` disables (not recommended: captions are part of the "edited" requirement).
+- `render.py build` always re-transcribes the exact clip window in `final` mode: ffmpeg denoise (high/low-pass, `afftdn`, level) + a
+  names-only vocabulary prompt + two Groq Whisper passes (large-v3 and turbo) merged phrase-wise. Measured on a noisy GTA 6 window:
+  18 words (first scan) -> 47 words. Free.
+- `transcript.json` holds `text`, `second_pass_text`, `gaps_rel` (speech energy with no words) and how to fix. The agent compares the two
+  texts, fixes names, drops game/NPC lines that confuse the clip, edits `words` in `spec.json`, sets `words_locked: true`, re-builds.
+  The agent cannot hear audio: it only adds words it is certain of (frames, chat, repeated lines).
+- Paid option (never automatic): ElevenLabs Scribe v3 (`transcribe.py --engine scribe`) hears more words on game audio (55 vs 47 in the same
+  test) and labels speakers; voice isolation did not add streamer words in our test. Use only when the user has a plan and asks for it.
+- `word_pop` (default): phrases of up to 3 words, the spoken word turns yellow and pops; phrases never overlap. Profanity masked `s***`
+  (`clip.mask_profanity`) and bleeped with a 1 kHz tone <= 0.9 s (`clip.bleep_profanity`).
+- Whisper quirks handled: hallucinated trailing "Thank you.", duplicated segments (glitch, < 0.25 s apart), words stretched over silences
+  (capped at 0.6 s), descriptive-prompt hallucinations (we only prompt with names).
 
 ## Hook text
 

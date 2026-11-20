@@ -26,13 +26,15 @@ cd ~/streamclips && python3 -m venv .venv && .venv/bin/pip install -r requiremen
 .venv/bin/python scripts/doctor.py
 ```
 
-Set in your shell (never in files): `GROQ_API_KEY` (free), `YOUTUBE_API_KEY` (free), optional `ELEVENLABS_API_KEY`.
+Set in your shell (never in files): `GROQ_API_KEY` (free), `YOUTUBE_API_KEY` (free). `ELEVENLABS_API_KEY` is optional and paid
+(voiceover or Scribe transcription, opt-in only).
 The agent asks for them if `doctor.py` says they are missing. macOS, Windows and Linux; Python 3.10+.
 
 ## Use
 
-Say to your agent: "new campaign, here is the brief" (paste it, attach the overlay), then "start clipping". The agent creates the
-campaign folder where you tell it, finds the freshest replay or live stream, proposes how many clips the source deserves, shows you
+Say to your agent: "new campaign, here is the brief" (paste it, attach the overlay), then "start clipping". The agent asks once where
+your clips should live and creates `<that folder>/streamclips/<campaign>/`; each day gets a folder, each clip gets a folder with a
+`README.md` that tells you exactly what to post and how. The agent finds the freshest replay or live stream, proposes how many clips the source deserves, shows you
 frames, renders, reviews, and packages. See `SKILL.md` for the full loop and `references/` for every rule.
 
 ## Credits and licenses

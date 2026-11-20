@@ -64,12 +64,29 @@ def test_chat_spam_filter():
 
 def test_transcribe_clean():
     raw = {"segments": [{"start": 0, "end": 2, "text": "Oh shit!", "no_speech_prob": 0.0},
-                        {"start": 2.1, "end": 3, "text": "Oh shit!", "no_speech_prob": 0.0},
-                        {"start": 30, "end": 40, "text": "Thank you.", "no_speech_prob": 0.0}],
-           "words": [{"word": "Oh", "start": 0, "end": 0.5}, {"word": "shit!", "start": 0.6, "end": 5.0}, {"word": "Thank", "start": 30, "end": 31}]}
+                        {"start": 2.1, "end": 3, "text": "Oh shit!", "no_speech_prob": 0.0},      # glitch duplicate (<0.25 s gap): dropped
+                        {"start": 5.0, "end": 6, "text": "Oh shit!", "no_speech_prob": 0.0},      # real repeat after a pause: kept
+                        {"start": 30, "end": 40, "text": "Thank you.", "no_speech_prob": 0.0}],   # past the window: dropped
+           "words": [{"word": "Oh", "start": 0, "end": 0.5}, {"word": "shit!", "start": 0.6, "end": 5.0}, {"word": "Oh", "start": 5.0, "end": 5.3},
+                     {"word": "shit!", "start": 5.4, "end": 5.9}, {"word": "Thank", "start": 30, "end": 31}]}
     out = transcribe.clean(raw, 20.0)
-    assert out["text"] == "Oh shit!"
-    assert len(out["words"]) == 2 and out["words"][1]["end"] - out["words"][1]["start"] <= 0.6
+    assert out["text"] == "Oh shit! Oh shit!"
+    assert len(out["words"]) == 4 and out["words"][1]["end"] - out["words"][1]["start"] <= 0.6
+
+
+def test_merge_fills_phrases_not_strays():
+    base = {"text": "a b", "words": [{"word": "a", "start": 0.0, "end": 0.3}, {"word": "b", "start": 6.0, "end": 6.3}]}
+    stray = {"text": "", "words": [{"word": "x", "start": 2.0, "end": 2.2}]}
+    phrase = {"text": "", "words": [{"word": f"w{i}", "start": 2.0 + i * 0.4, "end": 2.3 + i * 0.4} for i in range(3)]}
+    assert transcribe.merge(base, stray)["merged_from_second_pass"] == 0
+    assert transcribe.merge(base, phrase)["merged_from_second_pass"] == 3
+
+
+def test_safe_zone_constants():
+    from render import SAFE, ZONE, TEXT_ML, TEXT_MR, H
+    assert ZONE["face_top"] >= SAFE["top"] and ZONE["hook_y"] >= SAFE["top"]
+    assert H - ZONE["caption_margin_v"] <= H - SAFE["bottom"]
+    assert TEXT_ML >= SAFE["left"] and TEXT_MR >= SAFE["right"]
 
 
 def test_build_ass_no_overlap():
