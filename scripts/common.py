@@ -64,9 +64,12 @@ def ffmpeg_bin() -> str:
     if env and Path(env).exists():
         return env
     try:
+        import contextlib
+
         import static_ffmpeg.run as sfr  # type: ignore
 
-        ff, _ = sfr.get_or_fetch_platform_executables_else_raise()
+        with contextlib.redirect_stdout(sys.stderr):  # first-run download messages must not pollute JSON stdout
+            ff, _ = sfr.get_or_fetch_platform_executables_else_raise()
         return str(ff)
     except Exception:
         pass
