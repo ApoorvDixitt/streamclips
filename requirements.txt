@@ -1,0 +1,9 @@
+pyyaml>=6
+numpy>=1.26
+pillow>=10
+requests>=2.31
+yt-dlp>=2025.1.1
+streamlink>=7
+static-ffmpeg>=2.13
+# optional, Apple Silicon only, local transcription fallback:
+# mlx-whisper
