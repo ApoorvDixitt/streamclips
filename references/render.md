@@ -10,8 +10,8 @@ whole frame; text, face and overlay may not. `review.py` enforces this and draws
 
 ```
 y 0-230      top UI margin (nothing readable)
-y 240-370    overlay band (logo centred at y 305, width 0.72 * 1080 = 778 px -> x 151..929)
-y 390-720    face panel (330 px high, white 6 px frame, centred)
+y 240-370    overlay band (logo centred at y 305, width 0.72 * 1080 = 778 px -> x 151..929)   [only if the campaign has an overlay]
+y 390-720    face panel (330 px high, white 6 px frame, centred)                                 [no overlay: panel starts at y 240 and is 470 px high]
 y 740-1560   gameplay (source cropped to 1080:820, lanczos; crop shifted right of the facecam strip + alerts)
   y 800      hook box top (<= 2 lines, auto font 84 -> 58, margins 70 / 160 so it never enters the right column)
   y ~1300    captions (bottom edge at 1380; 3-word phrases, active word yellow + 12 %, 84 px Anton, 9 px outline)

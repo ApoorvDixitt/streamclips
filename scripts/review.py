@@ -45,7 +45,7 @@ def grab(path: Path, t: float) -> np.ndarray:
 
 def overlay_reference(spec: dict) -> tuple[np.ndarray, np.ndarray, int, int] | None:
     """Return (rgb, alpha, x, y) of the overlay as rendered, or None if the campaign has no overlay."""
-    f = spec.get("overlay", {}).get("file")
+    f = (spec.get("overlay") or {}).get("file")
     if not f or not Path(f).exists():
         return None
     from PIL import Image
@@ -119,7 +119,8 @@ def main() -> None:
     add("loudness_-14LUFS", lufs is not None and -16.5 <= lufs <= -11.5, f"{lufs:.1f} LUFS" if lufs is not None else "unmeasured", hard=False)
     times = [0.5, min(2.0, dur - 0.2), dur * 0.35, dur * 0.6, dur * 0.85, max(0.2, dur - 0.4)]
     ref = overlay_reference(spec)
-    if cfg.get("overlay", {}).get("required"):
+    overlay_required = bool((spec.get("overlay") or {}).get("required", cfg.get("overlay", {}).get("required")))
+    if overlay_required:
         if ref is None:
             add("overlay_visible_all_frames", False, "overlay file missing")
         else:
@@ -143,7 +144,9 @@ def main() -> None:
         if ox < SAFE["left"] or ox + ow > W - SAFE["right"] or oy < SAFE["top"] or oy + oh > H - SAFE["bottom"]:
             issues.append(f"overlay box x{ox}-{ox + ow} y{oy}-{oy + oh}")
     if spec.get("layout") == "face-top" and spec.get("facecam_region"):
-        if ZONE["face_top"] < SAFE["top"] or ZONE["face_top"] + ZONE["face_h"] > H - SAFE["bottom"]:
+        face_top = ZONE["face_top"] if ref is not None else SAFE["top"] + 10
+        face_bottom = face_top + (ZONE["face_h"] if ref is not None else ZONE["game_top"] - SAFE["top"] - 30)
+        if face_top < SAFE["top"] or face_bottom > H - SAFE["bottom"]:
             issues.append("face panel")
     if ZONE["hook_y"] < SAFE["top"] or H - ZONE["caption_margin_v"] > H - SAFE["bottom"]:
         issues.append("text zones")

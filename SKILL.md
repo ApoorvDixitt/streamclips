@@ -14,7 +14,7 @@ and never prints secrets. Run them with the skill's Python: `python <skill>/scri
 | User says | Do |
 |---|---|
 | "install / set up streamclips" | `references/setup.md`. Run `doctor.py`, ask for missing keys, re-run until `ok: true`. |
-| "new campaign", pastes a brief | `references/campaign.md`. Ask once where the user wants their clips (any folder, e.g. `~/Videos`); campaigns live in `<that folder>/streamclips/<campaign>/`. `campaign.py new --root <folder> ...`, fill `campaign.yaml` from the brief, `campaign.py validate`. |
+| "new campaign", pastes a brief | `references/campaign.md` + `references/setup.md` §5. Ask once where the user wants their clips (any folder, e.g. `~/Videos`); campaigns live in `<that folder>/streamclips/<campaign>/`. Read the brief, ask only for what it needs (an overlay file only if the brief requires one), `campaign.py new --root <folder> ...`, fill `campaign.yaml`, `campaign.py validate`, show it back. |
 | "start clipping <creator/campaign>", "clips for today" | The daily loop below. |
 | "is anything happening live?" | `discover.py` -> if live, `watch.py start`, then poll `watch.py status`; hot moments -> `watch.py clip` -> signals -> clip. |
 | "post plan", "when do I post" | `references/posting.md`: research, then `package.py --post-at ... --audience ...`. |
@@ -59,7 +59,8 @@ Parallel work: one source per sub-agent is fine (each writes to its own `sources
 - Transform every clip: layout + hook + captions (+ zoom/bleeps). Raw cut-outs are "reused content" and get accounts banned.
 - No reversing, mirroring, pitch-shifting or speed tricks to dodge detection. They are detectable and they look bad.
 - Respect `audio.mode`. `original` means the streamer's audio is untouched except bleeps/loudness. Voiceover only when allowed, short, factual.
-- Overlay required -> it stays fully visible first frame to last. `review.py` checks pixels; you check the frame sheet.
+- Everything adapts to the brief: overlay only if required, voiceover only if allowed, caption text and hashtags exactly as written, rules
+  in the post files only if the brief has them. If an overlay is required it stays fully visible first frame to last (`review.py` checks pixels).
 - Keys live in the user's environment only. Never write them into files, logs or chat. If a key is missing, ask the user to export it.
 - Do not post, log in, or run multiple accounts for the user. Posting is manual; you prepare the pack and the plan.
 - Free first. Everything works with the two free keys (Groq, YouTube). Paid engines (ElevenLabs Scribe/voice isolation/voiceover) are opt-in

@@ -44,7 +44,12 @@ Always run scripts with the venv Python: `.venv/bin/python scripts/<name>.py` (W
 > - `GROQ_API_KEY` (free, console.groq.com) for transcription.
 > - `YOUTUBE_API_KEY` (free, Google Cloud -> enable "YouTube Data API v3" -> credentials -> API key) for stream discovery and live chat.
 > - `ELEVENLABS_API_KEY` is optional and paid: only if you want voiceovers or opt into Scribe transcription. Everything works without it.
-> Add them to `~/.zshrc` / `~/.bashrc` (`export GROQ_API_KEY="..."`) or Windows env vars, open a new terminal, and tell me "keys set".
+> Where to save them, by OS:
+> - macOS (zsh, the default): add `export GROQ_API_KEY="..."` lines to `~/.zshrc`, then `source ~/.zshrc`.
+> - Linux (bash): same lines in `~/.bashrc`.
+> - Windows: Settings -> System -> About -> Advanced system settings -> Environment Variables -> User variables -> New; or in PowerShell
+>   `setx GROQ_API_KEY "..."`. Open a new terminal afterwards.
+> Then start a new agent session (the agent only sees variables that existed when it started) and tell me "keys set".
 
 Then re-run `doctor.py`. If the user pastes a key into chat anyway, ask them to rotate it afterwards and still put it in the environment.
 The agent's own process must have the variables: if the agent was started before the keys were added, ask the user to restart the agent session.
@@ -70,10 +75,23 @@ Ask: "Where should your clips live? I will create a `streamclips` folder there."
 Never put campaigns inside the skill repo (`campaign.py` refuses). Remember the location in the campaign's `MEMORY.md` and in your
 own project notes so the next session finds it.
 
-## 5. First campaign
+## 5. First campaign (adapt to the brief, never assume)
 
-Ask the user for: the campaign brief (text or screenshot), the overlay file if any, the creator's YouTube handle / Twitch login
-(check the brief's links: creators often stream on a secondary channel). Then `references/campaign.md`.
+Ask the user for the campaign brief (text, link or screenshot). Read it, then ask only for what the brief needs:
+
+| The brief says | Ask for / do |
+|---|---|
+| a logo / watermark / overlay is required | the file (PNG with transparency is best) -> `overlay.required: true` |
+| nothing about an overlay | no overlay; the face panel uses the freed space. Do not invent branding. |
+| which creator / channels are allowed | the links; verify the handle (creators often stream on a secondary channel) |
+| required caption text / hashtags | copy them exactly into `caption.*` |
+| "keep original audio" or nothing about narration | `audio.mode: original` (voiceover off) |
+| narration / commentary allowed or encouraged | `audio.mode: voiceover_allowed`, and the ElevenLabs key becomes relevant (optional, paid) |
+| length limits, platforms, payout, geography, engagement, post caps, submission timing | map to the fields in `references/campaign.md`; leave defaults for anything unspecified |
+| warm-up / account rules / analytics process | `rules.notes`, so they appear in every clip's post files |
+
+Anything the brief does not mention stays at the default and is **not** added to the user's checklist. Show the filled `campaign.yaml`
+back to the user and confirm what you inferred before clipping.
 
 ## 6. Verify end to end
 

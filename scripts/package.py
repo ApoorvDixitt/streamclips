@@ -101,12 +101,51 @@ def post_md(platform: str, cfg: dict, hook: str, caption: str, meta: dict) -> st
 {copy_block}
 
 ## Rules for this post
-- Post from the phone app (not a scheduler) if this account is new (first ~10 posts).
-- Keep it public for at least {rules.get('keep_public_days', 30)} days. Likes must stay visible.
-- This clip may be posted at most {rules.get('max_posts_per_clip', 5)} times in total across all accounts/platforms.
-- Do not edit the caption text or hashtags: the campaign checks them exactly.
-- Once the post passes about {int(1000 * float(cfg.get('payout', {}).get('min_payout_usd', 0) or 0) / max(float(cfg.get('payout', {}).get('cpm_usd', 1) or 1), 0.01)):,} views, record the analytics screen recording the campaign asks for.
+{chr(10).join(post_rules(cfg))}
 """
+
+
+def post_rules(cfg: dict) -> list[str]:
+    """Only the rules this campaign actually has (from campaign.yaml), in plain words."""
+    r = cfg.get("rules", {}) or {}
+    cap = cfg.get("caption", {}) or {}
+    pay = cfg.get("payout", {}) or {}
+    out_: list[str] = ["- Post from the phone app (not a scheduler) if this account is new (first ~10 posts)."]
+    if r.get("keep_public_days"):
+        out_.append(f"- Keep it public for at least {r['keep_public_days']} days." + (" Likes must stay visible." if r.get("likes_visible") else ""))
+    elif r.get("likes_visible"):
+        out_.append("- Likes must stay visible.")
+    if r.get("max_posts_per_clip"):
+        out_.append(f"- This clip may be posted at most {r['max_posts_per_clip']} times in total across all accounts/platforms.")
+    if cap.get("required_text") or cap.get("hashtags"):
+        out_.append("- Do not edit the caption text or hashtags: the campaign checks them exactly.")
+    if cap.get("no_links"):
+        out_.append("- No links or URLs anywhere in the caption.")
+    if pay.get("min_payout_usd") and pay.get("cpm_usd"):
+        views = int(1000 * float(pay["min_payout_usd"]) / max(float(pay["cpm_usd"]), 0.01))
+        out_.append(f"- Once the post passes about {views:,} views, record the analytics screen recording if the campaign asks for one.")
+    if r.get("tier1_min_share"):
+        out_.append(f"- The campaign wants at least {int(float(r['tier1_min_share']) * 100)} % of viewers from {', '.join(cfg.get('audience', {}).get('tier1', []))}.")
+    for note in r.get("notes", []) or []:
+        out_.append(f"- {note}")
+    return out_
+
+
+def describe_edit(cfg: dict, spec: dict) -> str:
+    parts = {"face-top": "face panel + gameplay", "fill": "gameplay filling the frame", "fit": "full frame over a blurred background"}.get(spec.get("layout"), "vertical layout")
+    bits = [parts]
+    if spec.get("hook"):
+        bits.append("hook text for the first seconds")
+    if spec.get("captions", "word_pop") != "none":
+        bits.append("word-by-word captions")
+    if (spec.get("overlay") or {}).get("file"):
+        bits.append("the campaign's overlay")
+    if spec.get("bleep_profanity") or spec.get("mask_profanity"):
+        bits.append("swearing bleeped and masked")
+    if spec.get("audio_mode") == "voiceover":
+        bits.append("a short voiceover line")
+    bits.append("loudness normalised")
+    return ", ".join(bits)
 
 
 def clip_readme(cfg: dict, spec: dict, review: dict, meta: dict, posts: list[str], n_srt: int, tr: dict) -> str:
@@ -120,7 +159,7 @@ def clip_readme(cfg: dict, spec: dict, review: dict, meta: dict, posts: list[str
 ## What this is
 A {dur:.0f}-second vertical clip from {cfg.get('creator', {}).get('name', 'the streamer')}'s stream
 ({Path(spec.get('source_dir', '')).name} at {hms(spec['start_t'])} - {hms(spec['end_t'])}), edited for TikTok / Reels / Shorts:
-face panel + gameplay, hook text for the first seconds, word-by-word captions, campaign overlay, swearing bleeped and masked, loudness normalised.
+{describe_edit(cfg, spec)}.
 
 ## What to do
 1. Watch `clip.mp4` once.

@@ -153,12 +153,16 @@ def build_filter(spec: dict, src_w: int, src_h: int, ass_path: Path, overlay_png
     if layout == "face-top" and fc:
         fw, fh = int(fc["w"] * src_w) // 2 * 2, int(fc["h"] * src_h) // 2 * 2
         fx, fy = int(fc["x"] * src_w), int(fc["y"] * src_h)
-        ph = ZONE["face_h"]
+        # no campaign overlay -> the band above the face is free: make the face panel taller and start it at the safe top
+        face_top, ph = (SAFE["top"] + 10, ZONE["game_top"] - SAFE["top"] - 30) if not overlay_png else (ZONE["face_top"], ZONE["face_h"])
         pw = int(fw * ph / fh) // 2 * 2
+        if pw > W - SAFE["left"] - SAFE["right"]:
+            pw = (W - SAFE["left"] - SAFE["right"]) // 2 * 2
+            ph = int(pw * fh / fw) // 2 * 2
         px = (W - pw) // 2
         f.append(f"[fsrc]crop={fw}:{fh}:{fx}:{fy},scale={pw}:{ph}:flags=lanczos,setsar=1,"
                  f"drawbox=x=0:y=0:w=iw:h=ih:color=white@0.9:t=6[face]")
-        f.append(f"[{last}][face]overlay={px}:{ZONE['face_top']}[c2]")
+        f.append(f"[{last}][face]overlay={px}:{face_top}[c2]")
         last = "c2"
     if overlay_png:
         x0, y0, x1, y1 = overlay_bbox(overlay_png)
@@ -227,7 +231,7 @@ def cmd_spec(a) -> None:
         "captions": clip.get("captions", "word_pop"), "mask_profanity": bool(clip.get("mask_profanity", True)), "bleep_profanity": bool(clip.get("bleep_profanity", True)),
         "audio_mode": "voiceover" if a.voiceover else "original",
         "voiceover": {"text": a.voiceover, "at": 0.0, "voice_id": cfg["audio"].get("voice_id")} if a.voiceover else None,
-        "overlay": {**cfg["overlay"], "file": str(campaign / cfg["overlay"]["file"]) if cfg["overlay"].get("file") else None},
+        "overlay": ({**cfg["overlay"], "file": str(campaign / cfg["overlay"]["file"])} if cfg.get("overlay", {}).get("file") else {"file": None, "required": False}),
         "words": words, "words_locked": False, "creator_name": cfg.get("creator", {}).get("name", ""), "names": list(clip.get("names", []) or []),
         "language": clip.get("language", "en"), "out": str(out_dir / "clip.mp4"),
     }
@@ -275,9 +279,11 @@ def cmd_build(a) -> None:
     out_dir = spec_path.parent
     ass_path = out_dir / "captions.ass"
     ass_path.write_text(build_ass(words, spec["start_t"], clip_len, spec.get("hook"), spec.get("hook_seconds", 2.6), spec.get("captions", "word_pop"), spec.get("mask_profanity", True)), encoding="utf-8")
-    overlay_png = Path(spec["overlay"]["file"]) if spec.get("overlay", {}).get("file") else None
+    overlay_png = Path(spec["overlay"]["file"]) if (spec.get("overlay") or {}).get("file") else None
     if overlay_png and not overlay_png.exists():
         raise StepError(f"overlay file missing: {overlay_png}")
+    if spec.get("overlay", {}).get("required") and not overlay_png:
+        raise StepError("campaign says overlay.required but no overlay file is configured")
     vo = None
     if spec.get("audio_mode") == "voiceover" and spec.get("voiceover", {}).get("text"):
         from voiceover import ensure_voice, tts
