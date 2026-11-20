@@ -65,7 +65,7 @@ def main() -> None:
     ap.add_argument("--url", required=True)
     ap.add_argument("--start", default="0")
     ap.add_argument("--end")
-    ap.add_argument("--quality", default="720p60,720p,1080p60,1080p,best")
+    ap.add_argument("--quality", default="1080p60,1080p,720p60,720p,best")
     a = ap.parse_args()
     campaign = find_campaign(a.campaign)
     platform, vid = parse_url(a.url)
