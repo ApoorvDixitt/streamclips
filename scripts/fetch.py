@@ -21,6 +21,9 @@ def parse_url(url: str) -> tuple[str, str]:
     m = re.search(r"twitch\.tv/videos/(\d+)", url)
     if m:
         return "twitch", m.group(1)
+    m = re.search(r"twitch\.tv/([A-Za-z0-9_]+)/?(?:\?.*)?$", url)
+    if m and m.group(1) not in ("videos", "directory"):
+        return "twitch", m.group(1).lower()  # live channel
     m = re.search(r"(?:v=|youtu\.be/|/live/|/shorts/)([A-Za-z0-9_-]{11})", url)
     if m:
         return "youtube", m.group(1)

@@ -48,9 +48,10 @@ def _get(url, headers=None, timeout=30):
 
 
 class Writer:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, live: bool = False):
         path.parent.mkdir(parents=True, exist_ok=True)
         self.path = path
+        self.live = live
         self.f = open(path, "a", encoding="utf-8")
         self.n = 0
         self.seen: set[str] = set()
@@ -62,7 +63,7 @@ class Writer:
             self.seen.add(mid)
         self.f.write(json.dumps({"t": round(float(t), 2), "user": user, "text": text}, ensure_ascii=False) + "\n")
         self.n += 1
-        if self.n % 200 == 0:
+        if self.n % 10 == 0 or self.live:
             self.f.flush()
 
     def close(self):
@@ -293,7 +294,7 @@ def main() -> None:
     sdir = source_dir(campaign, platform, vid)
     chat_path = sdir / "chat.jsonl"
     meta_path = sdir / "chat_meta.json"
-    w = Writer(chat_path)
+    w = Writer(chat_path, live=(a.mode == "live"))
     try:
         if a.mode == "replay":
             if platform == "twitch":
